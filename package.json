@@ -36,11 +36,14 @@
     "showcase:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/showcase.tsx -- --headless",
     "diff": "npm run build:native && node tools/hermes-app.mjs run examples/diff.tsx --",
     "diff:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/diff.tsx -- --headless",
+    "dashboard": "npm run build:native && node tools/hermes-app.mjs run examples/dashboard.tsx --",
+    "dashboard:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/dashboard.tsx -- --headless",
     "benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/stress.tsx -- --headless",
     "bytecode:chat": "node tools/hermes-app.mjs bytecode examples/chat.tsx",
     "compile:chat": "npm run build:native && node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat",
     "compile:showcase": "npm run build:native && node tools/hermes-app.mjs pack examples/showcase.tsx build/blendx-showcase",
     "compile:diff": "npm run build:native && node tools/hermes-app.mjs pack examples/diff.tsx build/blendx-diff",
+    "compile:dashboard": "npm run build:native && node tools/hermes-app.mjs pack examples/dashboard.tsx build/blendx-dashboard",
     "test": "npm run build && npm run build:test-addon && node --test tests/*.test.mjs"
   },
   "dependencies": {

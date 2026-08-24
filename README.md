@@ -97,6 +97,16 @@ npm run diff:benchmark
 Use the changed-file sidebar or **Jump to file**, then approve the review or
 request changes from the header.
 
+The real-time operations dashboard combines animated canvas charts, changing
+metrics, service-health progress, and a 160-row virtualized process table:
+
+```bash
+npm run dashboard
+npm run dashboard:benchmark
+```
+
+Use **Pause updates** to freeze or resume the live telemetry.
+
 To create a standalone executable containing the lean Hermes VM, React,
 react-reconciler, the application bytecode, the native renderer, and static
 Blend2D:
@@ -112,6 +122,10 @@ npm run compile:showcase
 # And the pull-request review app:
 npm run compile:diff
 ./build/blendx-diff
+
+# And the operations dashboard:
+npm run compile:dashboard
+./build/blendx-dashboard
 ```
 
 The executable still uses the target operating system's SDL2 and GUI libraries.
