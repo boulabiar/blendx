@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": ">=1.3.0"
+  },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "exports": {
@@ -21,24 +25,24 @@
   },
   "scripts": {
     "build:native": "cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j",
-    "build:ts": "tsc -p tsconfig.json",
-    "build": "npm run build:native && npm run build:ts",
-    "example": "npm run build && node dist/examples/counter.js",
-    "stress": "npm run build && node dist/examples/stress.js",
-    "chat": "npm run build && node dist/examples/chat.js",
-    "chat:benchmark": "npm run build && node dist/examples/chat.js --headless",
-    "benchmark": "npm run build && node dist/examples/stress.js --headless",
-    "test": "node --test tests/*.test.mjs"
+    "build:types": "bun x tsc -p tsconfig.json",
+    "build": "bun run build:native && bun run build:types",
+    "example": "bun run build:native && bun examples/counter.tsx",
+    "stress": "bun run build:native && bun examples/stress.tsx",
+    "chat": "bun run build:native && bun examples/chat.tsx",
+    "chat:benchmark": "bun run build:native && bun examples/chat.tsx --headless",
+    "benchmark": "bun run build:native && bun examples/stress.tsx --headless",
+    "compile:chat": "bun run build:native && bun build --compile --minify examples/chat.tsx --outfile build/blendx-chat",
+    "test": "bun run build && bun test tests/*.test.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",
     "react-reconciler": "^0.33.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/bun": "^1.3.0",
     "@types/react": "^19.0.0",
     "@types/react-reconciler": "^0.28.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }

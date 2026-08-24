@@ -12,12 +12,13 @@ React -> react-reconciler -> Node-API mutations -> retained C++ tree
 
 ## Run the example
 
-Prerequisites are CMake, a C++17 compiler, SDL2 development files, Node.js 18+
-and the sibling `../blend2d` checkout built as `../blend2d/build/libblend2d.so`.
+Prerequisites are Bun 1.3+, CMake, a C++17 compiler, SDL2 development files,
+Node-API headers, and the sibling `../blend2d` source checkout. Blend2D is built
+statically into the native addon.
 
 ```bash
-npm install
-npm run example
+bun install
+bun run example
 ```
 
 Click **Increment** to exercise the full native event-to-React-state-to-native
@@ -26,7 +27,7 @@ mutation round trip.
 To run the large animated workload:
 
 ```bash
-npm run stress
+bun run stress
 ```
 
 It retains 20,000 rows, paints only the visible rows, changes 320 small elements
@@ -34,7 +35,7 @@ at 60 Hz, and prints renderer statistics once per second. Scroll the list with
 the mouse wheel. For a repeatable run without window-presentation overhead:
 
 ```bash
-npm run benchmark
+bun run benchmark
 ```
 
 The GPUix-inspired chat workload retains 5,000 messages and exercises images,
@@ -42,14 +43,25 @@ SVG icons, a changing canvas, buttons, badges, progress, Markdown, code, diffs,
 an editable composer, absolute positioning, and an anchored model picker:
 
 ```bash
-npm run chat
-npm run chat:benchmark
+bun run chat
+bun run chat:benchmark
 # choose a different transcript size
-npm run build && node dist/examples/chat.js --messages=20000
+bun examples/chat.tsx --messages=20000
 ```
 
 Click **Model** to show the anchored overlay, type in the composer, use
 Ctrl+Enter to submit, and scroll the transcript with the mouse wheel.
+
+To create a standalone executable containing Bun, React, the application, the
+N-API addon, and static Blend2D:
+
+```bash
+bun run compile:chat
+./build/blendx-chat
+```
+
+The executable still uses the target operating system's SDL2 and GUI libraries.
+See [`PACKAGES.md`](PACKAGES.md) for the full dependency inventory.
 
 ## API
 
@@ -135,9 +147,9 @@ session, presentation dominates and should be evaluated separately from CPU
 layout and Blend2D paint time.
 
 The 5,000-message chat benchmark retains 11,312 nodes. A representative
-headless run mounted in 168 ms and then updated its animated canvas/progress at
-a 0.30 ms median renderer frame time while painting 50 intersecting nodes and
-7,480 pixels per update.
+compiled-Bun headless run mounted in 88 ms and then updated its animated
+canvas/progress at a 0.23 ms median renderer frame time while painting 50
+intersecting nodes and 7,480 pixels per update.
 
 ## Adding another native element
 

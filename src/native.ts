@@ -1,8 +1,10 @@
-import { createRequire } from "node:module"
 import type { NativeRenderer } from "./types.js"
 
-const require = createRequire(import.meta.url)
+// Bun's executable compiler recognizes direct N-API requires and embeds the
+// addon in the generated binary. Bun also requires require()/process.dlopen()
+// rather than ESM import for Node-API modules.
+const nativeRenderer = require("../native/blendx_native.node") as NativeRenderer
 
 export function loadNativeRenderer(): NativeRenderer {
-  return require("../native/blendx_native.node") as NativeRenderer
+  return nativeRenderer
 }
