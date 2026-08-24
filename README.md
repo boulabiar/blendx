@@ -107,6 +107,15 @@ npm run dashboard:benchmark
 
 Use **Pause updates** to freeze or resume the live telemetry.
 
+The live log and trace explorer retains 2,500 events, inserts new entries at
+the top, virtualizes visible rows, and provides severity/service filters,
+search, pause/resume, row selection, and trace details:
+
+```bash
+npm run logs
+npm run logs:benchmark
+```
+
 To create a standalone executable containing the lean Hermes VM, React,
 react-reconciler, the application bytecode, the native renderer, and static
 Blend2D:
@@ -126,6 +135,10 @@ npm run compile:diff
 # And the operations dashboard:
 npm run compile:dashboard
 ./build/blendx-dashboard
+
+# And the live log explorer:
+npm run compile:logs
+./build/blendx-logs
 ```
 
 The executable still uses the target operating system's SDL2 and GUI libraries.
