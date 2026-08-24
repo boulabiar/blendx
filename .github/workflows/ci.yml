@@ -39,5 +39,8 @@ jobs:
       - name: Run the GPUix native-text showcase port
         run: node tools/hermes-app.mjs run examples/showcase.tsx -- --headless
 
+      - name: Run the GPUix diff review port
+        run: node tools/hermes-app.mjs run examples/diff.tsx -- --headless
+
       - name: Verify the packed executable
         run: node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat && ./build/blendx-chat --headless

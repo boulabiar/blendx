@@ -85,6 +85,18 @@ npm run showcase:benchmark
 
 Use **Change sample** to update the code and diff in one React commit.
 
+The GPUix-inspired pull-request review example expands the dedicated diff demo
+with selectable files, large scrollable patches, review progress, status
+actions, and an anchored quick-file picker:
+
+```bash
+npm run diff
+npm run diff:benchmark
+```
+
+Use the changed-file sidebar or **Jump to file**, then approve the review or
+request changes from the header.
+
 To create a standalone executable containing the lean Hermes VM, React,
 react-reconciler, the application bytecode, the native renderer, and static
 Blend2D:
@@ -96,6 +108,10 @@ npm run compile:chat
 # The showcase can be packed in the same way:
 npm run compile:showcase
 ./build/blendx-showcase
+
+# And the pull-request review app:
+npm run compile:diff
+./build/blendx-diff
 ```
 
 The executable still uses the target operating system's SDL2 and GUI libraries.
