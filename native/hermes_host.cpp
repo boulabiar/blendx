@@ -158,7 +158,7 @@ class Host {
 
   int run() {
     bool renderer_running = true;
-    while (renderer_running || !timers_.empty()) {
+    while (renderer_running) {
       if (interrupted.exchange(false, std::memory_order_relaxed)) invoke_signal();
       if (!run_due_timers()) return 1;
       if (runtime_.drainJobs() == hermes::vm::ExecutionStatus::EXCEPTION) {
@@ -168,7 +168,10 @@ class Host {
       if (print_exception(env_)) return 1;
       renderer_running = poll_renderer();
       if (print_exception(env_)) return 1;
-      if (!renderer_running && timers_.empty()) break;
+      // Closing the native window or calling renderer.shutdown() is terminal.
+      // Animation intervals may still be registered if the close originated in
+      // SDL rather than React, so they must not keep the process alive.
+      if (!renderer_running) break;
       auto next = Clock::time_point::max();
       for (const auto& [_, timer] : timers_) next = std::min(next, timer.due);
       const auto now = Clock::now();
