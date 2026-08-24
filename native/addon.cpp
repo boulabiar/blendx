@@ -200,6 +200,7 @@ struct Node {
   uint32_t overdraw = 2;
   size_t visible_start = 0;
   size_t visible_end = 0;
+  size_t last_child_count = 0;
 };
 
 struct Size {
@@ -289,6 +290,7 @@ class Renderer {
     render_time_ms_ = 0.0;
     frame_samples_.clear();
     focused_id_ = 0;
+    hovered_id_ = 0;
     dirty_regions_.clear();
     dirty_nodes_.clear();
     scrolling_nodes_.clear();
@@ -333,6 +335,8 @@ class Renderer {
     destroyed.push_back(id);
     nodes_.erase(it);
     scrolling_nodes_.erase(id);
+    if (focused_id_ == id) focused_id_ = 0;
+    if (hovered_id_ == id) hovered_id_ = 0;
     if (root_id_ == id) root_id_ = 0;
     dirty_ = true;
   }
@@ -427,6 +431,72 @@ class Renderer {
     if (enabled) target->events.insert(kind);
     else target->events.erase(kind);
   }
+  void focus_element(napi_env env, napi_ref callback_ref, uint64_t id) {
+    Node* target = node(id);
+    if (id && (!target || bool_prop(*target, "disabled") ||
+               number_prop(*target, "tabIndex", target->type == "button" ||
+                                                   target->handler->kind == ElementHandler::Kind::kInput ? 0.0 : -1.0) < 0.0)) {
+      return;
+    }
+    if (focused_id_ == id) return;
+    const uint64_t previous = focused_id_;
+    focused_id_ = id;
+    if (previous) emit_to(env, callback_ref, previous, "blur");
+    if (focused_id_) emit_to(env, callback_ref, focused_id_, "focus");
+    if (!headless_) {
+      Node* focused = node(focused_id_);
+      if (focused && focused->handler->kind == ElementHandler::Kind::kInput) SDL_StartTextInput();
+      else SDL_StopTextInput();
+    }
+    if (previous) invalidate_paint(previous);
+    if (focused_id_) invalidate_paint(focused_id_);
+    dirty_ = true;
+  }
+  void dispatch_pointer(napi_env env, napi_ref callback_ref, const std::string& kind,
+                        double x, double y, int button) {
+    if (kind == "mouseMove") {
+      update_hover(env, callback_ref, x, y);
+      return;
+    }
+    if (kind == "click") {
+      emit_pointer(env, callback_ref, "click", x, y, button);
+      return;
+    }
+    emit_pointer(env, callback_ref, kind, x, y, button);
+    if (kind == "mouseDown") {
+      emit_outside(env, callback_ref, x, y);
+      focus_element(env, callback_ref, hit_test_focusable(root_id_, x, y));
+    } else if (kind == "mouseUp") {
+      emit_pointer(env, callback_ref, "click", x, y, button);
+    }
+  }
+  void dispatch_key(napi_env env, napi_ref callback_ref, const std::string& key) {
+    if (!focused_id_) return;
+    const uint64_t target_id = focused_id_;
+    emit_to(env, callback_ref, target_id, "keyDown", {}, key);
+    if (focused_id_ != target_id) return;
+    if (key == "Enter" || key == "Space") {
+      Node* target = node(target_id);
+      if (target && target->handler->kind != ElementHandler::Kind::kInput &&
+          !bool_prop(*target, "disabled")) {
+        emit_to(env, callback_ref, focused_id_, "click");
+      }
+    }
+  }
+  void scroll_to_item(uint64_t id, size_t index) {
+    Node* target = node(id);
+    if (!target || target->handler->kind != ElementHandler::Kind::kVirtualList) return;
+    const double max_scroll = std::max(0.0, target->content_height - target->box.h);
+    target->scroll_target_y = std::clamp(index * target->item_height, 0.0, max_scroll);
+    scrolling_nodes_.insert(id);
+  }
+  Box element_box(uint64_t id) const {
+    auto it = nodes_.find(id);
+    return it == nodes_.end() ? Box{} : it->second.box;
+  }
+  BLResult capture_screenshot(const std::string& path) const {
+    return framebuffer_.write_to_file(path.c_str());
+  }
   void record_mutations(size_t count) { mutations_last_commit_ = count; }
   void mark_dirty() { dirty_ = true; }
   size_t node_count() const { return nodes_.size(); }
@@ -479,26 +549,16 @@ class Renderer {
           emit_pointer(env, event_callback, kind, event.button.x, event.button.y,
                        event.button.button);
           if (event.type == SDL_MOUSEBUTTONDOWN) {
-            const uint64_t input_id = hit_test_input(root_id_, event.button.x, event.button.y);
-            if (input_id != focused_id_) {
-              const uint64_t previous = focused_id_;
-              focused_id_ = input_id;
-              if (previous) emit_to(env, event_callback, previous, "blur");
-              if (focused_id_) {
-                SDL_StartTextInput();
-                emit_to(env, event_callback, focused_id_, "focus");
-              } else {
-                SDL_StopTextInput();
-              }
-              dirty_ = true;
-              if (previous) invalidate_paint(previous);
-              if (focused_id_) invalidate_paint(focused_id_);
-            }
+            emit_outside(env, event_callback, event.button.x, event.button.y);
+            const uint64_t focus_id = hit_test_focusable(root_id_, event.button.x, event.button.y);
+            focus_element(env, event_callback, focus_id);
           }
           if (event.type == SDL_MOUSEBUTTONUP) {
             emit_pointer(env, event_callback, "click", event.button.x, event.button.y,
                          event.button.button);
           }
+        } else if (event.type == SDL_MOUSEMOTION) {
+          update_hover(env, event_callback, event.motion.x, event.motion.y);
         } else if (event.type == SDL_MOUSEWHEEL) {
           int mouse_x = 0;
           int mouse_y = 0;
@@ -523,14 +583,29 @@ class Renderer {
             emit_to(env, event_callback, focused_id_, "change", value);
           }
         } else if (event.type == SDL_KEYDOWN && focused_id_) {
-          Node* target = node(focused_id_);
+          const uint64_t key_target_id = focused_id_;
+          Node* target = node(key_target_id);
           if (!target) continue;
           const SDL_Keycode code = event.key.keysym.sym;
           std::string key = SDL_GetKeyName(code);
           if (code == SDLK_RETURN) key = "Enter";
           else if (code == SDLK_BACKSPACE) key = "Backspace";
           else if (code == SDLK_ESCAPE) key = "Escape";
-          emit_to(env, event_callback, focused_id_, "keyDown", {}, key);
+          else if (code == SDLK_SPACE) key = "Space";
+          else if (code == SDLK_UP) key = "ArrowUp";
+          else if (code == SDLK_DOWN) key = "ArrowDown";
+          else if (code == SDLK_TAB) key = "Tab";
+          emit_to(env, event_callback, key_target_id, "keyDown", {}, key);
+          if (focused_id_ != key_target_id || !(target = node(key_target_id))) continue;
+          if (code == SDLK_TAB) {
+            focus_next(env, event_callback, (event.key.keysym.mod & KMOD_SHIFT) ? -1 : 1);
+            continue;
+          }
+          if ((code == SDLK_RETURN || code == SDLK_SPACE) &&
+              target->handler->kind != ElementHandler::Kind::kInput &&
+              !bool_prop(*target, "disabled")) {
+            emit_to(env, event_callback, focused_id_, "click");
+          }
           if (bool_prop(*target, "readOnly")) continue;
           std::string value = string_prop(*target, "value");
           if (code == SDLK_BACKSPACE && !value.empty()) {
@@ -552,6 +627,16 @@ class Renderer {
               emit_to(env, event_callback, focused_id_, "change", value, key);
             }
           }
+        } else if (event.type == SDL_KEYUP && focused_id_) {
+          const SDL_Keycode code = event.key.keysym.sym;
+          std::string key = SDL_GetKeyName(code);
+          if (code == SDLK_RETURN) key = "Enter";
+          else if (code == SDLK_ESCAPE) key = "Escape";
+          else if (code == SDLK_SPACE) key = "Space";
+          else if (code == SDLK_UP) key = "ArrowUp";
+          else if (code == SDLK_DOWN) key = "ArrowDown";
+          else if (code == SDLK_TAB) key = "Tab";
+          emit_to(env, event_callback, focused_id_, "keyUp", {}, key);
         }
       }
     }
@@ -1001,12 +1086,15 @@ class Renderer {
     Node* n = node(id);
     if (!n) return;
     const Size natural = natural_size(id, available_w);
+    // The parent has already resolved basis, grow/shrink, percentages, and
+    // stretching into a forced size. Applying the child's explicit width a
+    // second time would discard that flex result (notably width: 0 + grow).
     double w = std::max(n->style.min_width,
-                        n->style.width.resolve(available_w,
-                            forced_w >= 0.0 ? forced_w : natural.w));
+                        forced_w >= 0.0 ? forced_w
+                                        : n->style.width.resolve(available_w, natural.w));
     double h = std::max(n->style.min_height,
-                        n->style.height.resolve(available_h,
-                            forced_h >= 0.0 ? forced_h : natural.h));
+                        forced_h >= 0.0 ? forced_h
+                                        : n->style.height.resolve(available_h, natural.h));
     if (n->style.max_width.set) w = std::min(w, n->style.max_width.resolve(available_w, w));
     if (n->style.max_height.set) h = std::min(h, n->style.max_height.resolve(available_h, h));
     n->box = {x, y, std::max(0.0, w), std::max(0.0, h)};
@@ -1020,6 +1108,11 @@ class Renderer {
       n->content_height = n->children.size() * n->item_height +
                           n->style.padding_top + n->style.padding_bottom;
       const double max_scroll = std::max(0.0, n->content_height - h);
+      if (bool_prop(*n, "followTail") && n->children.size() != n->last_child_count) {
+        n->scroll_y = max_scroll;
+        n->scroll_target_y = max_scroll;
+      }
+      n->last_child_count = n->children.size();
       n->scroll_y = std::clamp(n->scroll_y, 0.0, max_scroll);
       n->scroll_target_y = std::clamp(n->scroll_target_y, 0.0, max_scroll);
       const size_t first = static_cast<size_t>(std::floor(n->scroll_y / n->item_height));
@@ -1027,7 +1120,10 @@ class Renderer {
       n->visible_start = first > n->overdraw ? first - n->overdraw : 0;
       n->visible_end = std::min(n->children.size(), first + count + n->overdraw + 1);
       for (size_t i = n->visible_start; i < n->visible_end; ++i) {
-        const double child_y = inner_y + i * n->item_height - n->scroll_y;
+        const double bottom_alignment = string_prop(*n, "alignment") == "bottom"
+                                            ? std::max(0.0, inner_h - n->children.size() * n->item_height)
+                                            : 0.0;
+        const double child_y = inner_y + bottom_alignment + i * n->item_height - n->scroll_y;
         layout_node(n->children[i], inner_x, child_y, inner_w, n->item_height,
                     inner_w, n->item_height);
       }
@@ -1116,9 +1212,34 @@ class Renderer {
           absolute_y = positioning_y + positioning_h - *child->style.bottom - child_h;
         }
         if (anchored) {
-          if (const BLPoint* point = prop_as<BLPoint>(*child, "position")) {
-            absolute_x = point->x;
-            absolute_y = point->y;
+          BLPoint anchor_point;
+          bool has_anchor = false;
+          if (const double* anchor_id = prop_as<double>(*child, "anchorId")) {
+            if (Node* anchor_node = node(static_cast<uint64_t>(*anchor_id))) {
+              const std::string side = string_prop(*child, "side", "bottom");
+              const std::string align = string_prop(*child, "align", "start");
+              anchor_point.x = align == "center" ? anchor_node->box.x + anchor_node->box.w * 0.5
+                               : align == "end" ? anchor_node->box.x + anchor_node->box.w
+                                                : anchor_node->box.x;
+              anchor_point.y = side == "top" ? anchor_node->box.y
+                               : side == "bottom" ? anchor_node->box.y + anchor_node->box.h
+                               : align == "center" ? anchor_node->box.y + anchor_node->box.h * 0.5
+                               : align == "end" ? anchor_node->box.y + anchor_node->box.h
+                                                : anchor_node->box.y;
+              if (side == "left") anchor_point.x = anchor_node->box.x;
+              else if (side == "right") anchor_point.x = anchor_node->box.x + anchor_node->box.w;
+              has_anchor = true;
+            }
+          }
+          if (!has_anchor) {
+            if (const BLPoint* point = prop_as<BLPoint>(*child, "position")) {
+              anchor_point = *point;
+              has_anchor = true;
+            }
+          }
+          if (has_anchor) {
+            absolute_x = anchor_point.x;
+            absolute_y = anchor_point.y;
             const std::string side = string_prop(*child, "side", "bottom");
             const std::string align = string_prop(*child, "align", "start");
             const double anchor_gap = number_prop(*child, "anchorGap", 4.0);
@@ -1135,6 +1256,8 @@ class Renderer {
               absolute_x += offset->x;
               absolute_y += offset->y;
             }
+            absolute_x = std::clamp(absolute_x, 4.0, std::max(4.0, static_cast<double>(width_) - child_w - 4.0));
+            absolute_y = std::clamp(absolute_y, 4.0, std::max(4.0, static_cast<double>(height_) - child_h - 4.0));
           }
         }
         layout_node(child->id, absolute_x, absolute_y, positioning_w, positioning_h, child_w, child_h);
@@ -1329,8 +1452,13 @@ class Renderer {
       const double line = n.style.line_height > 0.0 ? n.style.line_height : font_size * 1.35;
       std::istringstream stream(display);
       std::string text;
+      const bool multiline = n.type == "textarea";
+      const double content_height = std::max(0.0, n.box.h - n.style.padding_top - n.style.padding_bottom);
       double y = n.box.y + n.style.padding_top;
+      if (!multiline) y += std::max(0.0, (content_height - line) * 0.5);
+      double caret_y = y;
       while (std::getline(stream, text)) {
+        caret_y = y;
         draw_text(context, text, n.box.x + n.style.padding_left, y + line * 0.78, font_size, display_color);
         y += line;
         if (y >= n.box.y + n.box.h) break;
@@ -1338,7 +1466,7 @@ class Renderer {
       if (n.id == focused_id_ && !bool_prop(n, "readOnly")) {
         const Size measured = measure_text(value.substr(value.find_last_of('\n') == std::string::npos ? 0 : value.find_last_of('\n') + 1), font_size);
         const double caret_x = std::min(n.box.x + n.box.w - 3.0, n.box.x + n.style.padding_left + measured.w + 1.0);
-        context.fill_rect(BLRect(caret_x, n.box.y + n.style.padding_top + 2.0, 1.5, line - 4.0), BLRgba32(color));
+        context.fill_rect(BLRect(caret_x, caret_y + 2.0, 1.5, line - 4.0), BLRgba32(color));
       }
       return;
     }
@@ -1444,6 +1572,73 @@ class Renderer {
       if (hit) return hit;
     }
     return it->second.handler->kind == ElementHandler::Kind::kInput ? id : 0;
+  }
+
+  uint64_t hit_test_focusable(uint64_t id, double x, double y) const {
+    auto it = nodes_.find(id);
+    if (it == nodes_.end() || !it->second.style.visible || !it->second.box.contains(x, y)) return 0;
+    for (auto child = it->second.children.rbegin(); child != it->second.children.rend(); ++child) {
+      const uint64_t hit = hit_test_focusable(*child, x, y);
+      if (hit) return hit;
+    }
+    const double default_tab = it->second.type == "button" ||
+                               it->second.handler->kind == ElementHandler::Kind::kInput ? 0.0 : -1.0;
+    return !bool_prop(it->second, "disabled") &&
+                   number_prop(it->second, "tabIndex", default_tab) >= 0.0 ? id : 0;
+  }
+
+  uint64_t hit_test_hoverable(uint64_t id, double x, double y) const {
+    auto it = nodes_.find(id);
+    if (it == nodes_.end() || !it->second.style.visible || !it->second.box.contains(x, y)) return 0;
+    for (auto child = it->second.children.rbegin(); child != it->second.children.rend(); ++child) {
+      const uint64_t hit = hit_test_hoverable(*child, x, y);
+      if (hit) return hit;
+    }
+    return it->second.events.count("mouseEnter") || it->second.events.count("mouseLeave") ? id : 0;
+  }
+
+  void update_hover(napi_env env, napi_ref callback_ref, double x, double y) {
+    const uint64_t next = hit_test_hoverable(root_id_, x, y);
+    if (next == hovered_id_) return;
+    const uint64_t previous = hovered_id_;
+    hovered_id_ = next;
+    if (previous) emit_to(env, callback_ref, previous, "mouseLeave");
+    if (hovered_id_) emit_to(env, callback_ref, hovered_id_, "mouseEnter");
+  }
+
+  void emit_outside(napi_env env, napi_ref callback_ref, double x, double y) {
+    std::vector<uint64_t> outside;
+    outside.reserve(nodes_.size());
+    for (const auto& [id, candidate] : nodes_) {
+      if (candidate.events.count("mouseDownOutside") && !candidate.box.contains(x, y)) {
+        outside.push_back(id);
+      }
+    }
+    for (uint64_t id : outside) emit_to(env, callback_ref, id, "mouseDownOutside");
+  }
+
+  void collect_focusable(uint64_t id, std::vector<uint64_t>& result) const {
+    auto it = nodes_.find(id);
+    if (it == nodes_.end() || !it->second.style.visible) return;
+    const double default_tab = it->second.type == "button" ||
+                               it->second.handler->kind == ElementHandler::Kind::kInput ? 0.0 : -1.0;
+    if (!bool_prop(it->second, "disabled") &&
+        number_prop(it->second, "tabIndex", default_tab) >= 0.0) {
+      result.push_back(id);
+    }
+    for (uint64_t child : it->second.children) collect_focusable(child, result);
+  }
+
+  void focus_next(napi_env env, napi_ref callback_ref, int direction) {
+    std::vector<uint64_t> focusable;
+    collect_focusable(root_id_, focusable);
+    if (focusable.empty()) return;
+    auto current = std::find(focusable.begin(), focusable.end(), focused_id_);
+    ptrdiff_t index = current == focusable.end() ? (direction > 0 ? -1 : 0)
+                                                 : std::distance(focusable.begin(), current);
+    index = (index + direction + static_cast<ptrdiff_t>(focusable.size())) %
+            static_cast<ptrdiff_t>(focusable.size());
+    focus_element(env, callback_ref, focusable[static_cast<size_t>(index)]);
   }
 
   void emit_to(napi_env env, napi_ref callback_ref, uint64_t id, const std::string& event,
@@ -1560,6 +1755,7 @@ class Renderer {
   std::unordered_set<uint64_t> scrolling_nodes_;
   std::vector<double> frame_samples_;
   uint64_t focused_id_ = 0;
+  uint64_t hovered_id_ = 0;
   std::chrono::steady_clock::time_point last_poll_at_ = std::chrono::steady_clock::now();
 };
 
@@ -1979,6 +2175,62 @@ napi_value render_frame(napi_env env, napi_callback_info) {
   return undefined(env);
 }
 
+napi_value focus_element(napi_env env, napi_callback_info info) {
+  auto values = args(env, info, 1);
+  if (!values.empty()) renderer.focus_element(env, event_callback, id_arg(env, values[0]));
+  return undefined(env);
+}
+
+napi_value dispatch_pointer(napi_env env, napi_callback_info info) {
+  auto values = args(env, info, 4);
+  if (values.size() >= 3) {
+    renderer.dispatch_pointer(env, event_callback, string(env, values[0]),
+                              number(env, values[1]), number(env, values[2]),
+                              values.size() >= 4 ? static_cast<int>(number(env, values[3], 1.0)) : 1);
+  }
+  return undefined(env);
+}
+
+napi_value dispatch_key(napi_env env, napi_callback_info info) {
+  auto values = args(env, info, 1);
+  if (!values.empty()) renderer.dispatch_key(env, event_callback, string(env, values[0]));
+  return undefined(env);
+}
+
+napi_value scroll_to_item(napi_env env, napi_callback_info info) {
+  auto values = args(env, info, 2);
+  if (values.size() == 2) {
+    renderer.scroll_to_item(id_arg(env, values[0]),
+                            static_cast<size_t>(std::max(0.0, number(env, values[1]))));
+  }
+  return undefined(env);
+}
+
+napi_value get_element_box(napi_env env, napi_callback_info info) {
+  auto values = args(env, info, 1);
+  const Box box = values.empty() ? Box{} : renderer.element_box(id_arg(env, values[0]));
+  napi_value result;
+  napi_create_object(env, &result);
+  auto set = [&](const char* name, double value) {
+    napi_value js_value;
+    napi_create_double(env, value, &js_value);
+    napi_set_named_property(env, result, name, js_value);
+  };
+  set("x", box.x);
+  set("y", box.y);
+  set("width", box.w);
+  set("height", box.h);
+  return result;
+}
+
+napi_value capture_screenshot(napi_env env, napi_callback_info info) {
+  auto values = args(env, info, 1);
+  if (values.empty() || renderer.capture_screenshot(string(env, values[0])) != BL_SUCCESS) {
+    napi_throw_error(env, nullptr, "Could not write BlendX framebuffer screenshot");
+  }
+  return undefined(env);
+}
+
 napi_value get_stats(napi_env env, napi_callback_info) {
   napi_value result;
   napi_create_object(env, &result);
@@ -2025,6 +2277,12 @@ napi_value module_init(napi_env env, napi_value exports) {
       {"setEventCallback", nullptr, set_event_callback, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"poll", nullptr, poll, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"renderFrame", nullptr, render_frame, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"focusElement", nullptr, focus_element, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"dispatchPointer", nullptr, dispatch_pointer, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"dispatchKey", nullptr, dispatch_key, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"scrollToItem", nullptr, scroll_to_item, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"getElementBox", nullptr, get_element_box, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"captureScreenshot", nullptr, capture_screenshot, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"getStats", nullptr, get_stats, nullptr, nullptr, nullptr, napi_default, nullptr},
   };
   napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);

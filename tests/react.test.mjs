@@ -5,7 +5,31 @@ import React from "react"
 
 const require = createRequire(import.meta.url)
 globalThis.__blendxNative = require("../dist/native/blendx_native.node")
-const { render } = await import("../dist/src/index.js")
+const {
+  render,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Combobox,
+  ComboboxContent,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} = await import("../dist/src/index.js")
+
+function pointer(native, kind, x, y) {
+  native.dispatchPointer(kind, x, y, 1)
+}
+
+function click(native, x, y) {
+  pointer(native, "mouseDown", x, y)
+  pointer(native, "mouseUp", x, y)
+}
 
 test("React mounts through the reconciler and renders with Blend2D", async () => {
   const tree = () => React.createElement(
@@ -46,5 +70,70 @@ test("React forwards rich element properties in one native batch", async () => {
   const stats = app.renderer.getStats()
   assert.equal(stats.nodeCount, 7)
   assert.ok(stats.frameCount >= 1)
+  app.stop()
+})
+
+test("Tooltip opens on native hover and closes after leaving", async () => {
+  let open = false
+  const app = render(
+    React.createElement("div", { style: { width: "100%", height: "100%", padding: 12 } },
+      React.createElement(Tooltip, { delayDuration: 0, onOpenChange: (value) => { open = value } },
+        React.createElement(TooltipTrigger, { style: { width: 120, height: 36, backgroundColor: "#223344" } },
+          React.createElement("text", null, "Hover")),
+        React.createElement(TooltipContent, { side: "bottom", style: { width: 120, height: 30, backgroundColor: "#111827" } },
+          React.createElement("text", null, "Tooltip")))),
+    { width: 360, height: 220, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  pointer(globalThis.__blendxNative, "mouseMove", 20, 20)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(open, true)
+  pointer(globalThis.__blendxNative, "mouseMove", 320, 200)
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  assert.equal(open, false)
+  app.stop()
+})
+
+test("Select opens, anchors content, and chooses an item", async () => {
+  let selected = "alpha"
+  const app = render(
+    React.createElement("div", { style: { width: "100%", height: "100%", padding: 12 } },
+      React.createElement(Select, { defaultValue: "alpha", onValueChange: (value) => { selected = value } },
+        React.createElement(SelectTrigger, { style: { width: 180, height: 36, backgroundColor: "#27324a" } },
+          React.createElement(SelectValue, null)),
+        React.createElement(SelectContent, { side: "bottom", style: { width: 180, padding: 4, backgroundColor: "#111827" } },
+          React.createElement(SelectItem, { value: "alpha", style: { width: "100%", height: 32 } }, "Alpha"),
+          React.createElement(SelectItem, { value: "beta", style: { width: "100%", height: 32 } }, "Beta")))),
+    { width: 400, height: 260, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  click(globalThis.__blendxNative, 30, 25)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.ok(app.renderer.getStats().nodeCount >= 8)
+  globalThis.__blendxNative.dispatchKey("ArrowDown")
+  globalThis.__blendxNative.dispatchKey("Enter")
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(selected, "beta")
+  app.stop()
+})
+
+test("Combobox opens from its native input and selects a filtered-list item", async () => {
+  let selected = null
+  const frameworks = ["Astro", "Next.js", "SvelteKit"]
+  const app = render(
+    React.createElement("div", { style: { width: "100%", height: "100%", padding: 12 } },
+      React.createElement(Combobox, { items: frameworks, onValueChange: (value) => { selected = value } },
+        React.createElement(ComboboxInput, { placeholder: "Framework", style: { width: 180, height: 36, backgroundColor: "#27324a" } }),
+        React.createElement(ComboboxContent, { side: "bottom", style: { width: 180, padding: 4, backgroundColor: "#111827" } },
+          React.createElement(ComboboxList, null, (item) =>
+            React.createElement(ComboboxItem, { key: item, value: item, style: { width: "100%", height: 32 } }, item))))),
+    { width: 400, height: 280, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  click(globalThis.__blendxNative, 30, 25)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  click(globalThis.__blendxNative, 30, 105)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(selected, "Next.js")
   app.stop()
 })

@@ -6,6 +6,7 @@ import { loadNativeRenderer } from "./native.js"
 import type {
   BlendxEvent,
   BlendxRoot,
+  BlendxElement,
   HostProps,
   NativeRenderer,
   NativeMutation,
@@ -14,6 +15,7 @@ import type {
 
 export type {
   BlendxEvent,
+  BlendxElement,
   BlendxRoot,
   CanvasCommand,
   AnchorPosition,
@@ -22,6 +24,8 @@ export type {
   Style,
   WindowOptions,
 } from "./types.js"
+
+export * from "./components/index.js"
 
 type Instance = { id: number; type: string; props: HostProps }
 type TextInstance = { id: number; text: string }
@@ -32,6 +36,9 @@ const { ConcurrentRoot, DefaultEventPriority } = ReconcilerConstants
 let nextElementId = 0
 let activeRenderer: NativeRenderer | null = null
 let currentPriority = 0
+const instances = new Map<number, Instance>()
+const hoveredInstances = new Set<number>()
+const activeInstances = new Set<number>()
 
 function native(): NativeRenderer {
   if (!activeRenderer) throw new Error("BlendX renderer is not active")
@@ -42,10 +49,14 @@ const eventProps = [
   ["onClick", "click"],
   ["onMouseDown", "mouseDown"],
   ["onMouseUp", "mouseUp"],
+  ["onMouseEnter", "mouseEnter"],
+  ["onMouseLeave", "mouseLeave"],
+  ["onMouseDownOutside", "mouseDownOutside"],
   ["onScroll", "scroll"],
   ["onChange", "change"],
   ["onSubmit", "submit"],
   ["onKeyDown", "keyDown"],
+  ["onKeyUp", "keyUp"],
   ["onFocus", "focus"],
   ["onBlur", "blur"],
 ] as const
@@ -77,7 +88,20 @@ function createBatchedRenderer(raw: NativeRenderer): NativeRenderer {
     poll: raw.poll.bind(raw),
     renderFrame: raw.renderFrame.bind(raw),
     getStats: raw.getStats.bind(raw),
+    focusElement: raw.focusElement.bind(raw),
+    dispatchPointer: raw.dispatchPointer.bind(raw),
+    dispatchKey: raw.dispatchKey.bind(raw),
+    scrollToItem: raw.scrollToItem.bind(raw),
+    getElementBox: raw.getElementBox.bind(raw),
+    captureScreenshot: raw.captureScreenshot.bind(raw),
   }
+}
+
+function hasPseudoListener(props: HostProps | null, eventType: string): boolean {
+  if (!props) return false
+  if (eventType === "mouseEnter" || eventType === "mouseLeave") return Boolean(props.style?.hover)
+  if (eventType === "mouseDown" || eventType === "mouseUp") return Boolean(props.style?.active)
+  return false
 }
 
 function syncEvents(id: number, oldProps: HostProps | null, props: HostProps): void {
@@ -86,12 +110,35 @@ function syncEvents(id: number, oldProps: HostProps | null, props: HostProps): v
     const handler = props[propName]
     if (oldHandler && !handler) {
       unregisterEvent(id, eventType)
-      native().setEventListener(id, eventType, false)
     } else if (handler && handler !== oldHandler) {
       registerEvent(id, eventType, handler as (event: BlendxEvent) => void)
-      if (!oldHandler) native().setEventListener(id, eventType, true)
     }
+    const wasEnabled = Boolean(oldHandler) || hasPseudoListener(oldProps, eventType)
+    const enabled = Boolean(handler) || hasPseudoListener(props, eventType)
+    if (wasEnabled !== enabled) native().setEventListener(id, eventType, enabled)
   }
+}
+
+function resolvedStyle(id: number, style: HostProps["style"]): HostProps["style"] {
+  if (!style) return style
+  const { hover, active, ...base } = style
+  if (activeInstances.has(id) && active) return { ...base, ...hover, ...active }
+  if (hoveredInstances.has(id) && hover) return { ...base, ...hover }
+  return base
+}
+
+function applyPointerStyle(renderer: NativeRenderer, event: BlendxEvent): void {
+  const instance = instances.get(event.elementId)
+  if (!instance) return
+  if (event.eventType === "mouseEnter") hoveredInstances.add(instance.id)
+  else if (event.eventType === "mouseLeave") {
+    hoveredInstances.delete(instance.id)
+    activeInstances.delete(instance.id)
+  } else if (event.eventType === "mouseDown") activeInstances.add(instance.id)
+  else if (event.eventType === "mouseUp") activeInstances.delete(instance.id)
+  else return
+  renderer.setStyle(instance.id, resolvedStyle(instance.id, instance.props.style) ?? {})
+  renderer.commitMutations()
 }
 
 function primitiveText(props: HostProps): string | null {
@@ -116,11 +163,11 @@ function stylesEqual(a: HostProps["style"], b: HostProps["style"]): boolean {
 
 function syncCustomProps(id: number, oldProps: HostProps | null, props: HostProps): void {
   for (const name of [
-    "itemHeight", "overdraw", "estimatedItemHeight", "src", "alt", "objectFit",
+    "itemHeight", "overdraw", "estimatedItemHeight", "alignment", "followTail", "src", "alt", "objectFit",
     "commands", "source", "code", "language", "showLineNumbers", "showHeader",
     "patch", "wordDiff", "value", "max", "placeholder", "readOnly", "minRows",
     "maxRows", "autoFocus", "position", "side", "align", "anchor", "offset",
-    "anchorGap",
+    "anchorGap", "anchorId", "tabIndex", "disabled",
   ] as const) {
     if (props[name] !== oldProps?.[name]) native().setCustomProp(id, name, props[name] ?? null)
   }
@@ -134,8 +181,9 @@ const hostConfig = {
 
   createInstance(type: string, props: HostProps): Instance {
     const instance = { id: ++nextElementId, type, props }
+    instances.set(instance.id, instance)
     native().createElement(instance.id, type)
-    native().setStyle(instance.id, props.style ?? {})
+    native().setStyle(instance.id, resolvedStyle(instance.id, props.style) ?? {})
     const content = primitiveText(props)
     if (type === "text" && content !== null) native().setText(instance.id, content)
     syncEvents(instance.id, null, props)
@@ -163,7 +211,12 @@ const hostConfig = {
     native().removeChild(parent.id, child.id)
   },
   removeChildFromContainer(_container: Container, child: Instance): void {
-    for (const id of native().destroyElement(child.id)) unregisterEvent(id)
+    for (const id of native().destroyElement(child.id)) {
+      unregisterEvent(id)
+      instances.delete(id)
+      hoveredInstances.delete(id)
+      activeInstances.delete(id)
+    }
   },
   insertBefore(parent: Instance, child: Instance | TextInstance, before: Instance | TextInstance): void {
     native().insertBefore(parent.id, child.id, before.id)
@@ -185,7 +238,7 @@ const hostConfig = {
   commitMount(): void {},
   commitUpdate(instance: Instance, _type: string, oldProps: HostProps, newProps: HostProps): void {
     if (!stylesEqual(oldProps.style, newProps.style)) {
-      native().setStyle(instance.id, newProps.style ?? {})
+      native().setStyle(instance.id, resolvedStyle(instance.id, newProps.style) ?? {})
     }
     syncEvents(instance.id, oldProps, newProps)
     syncCustomProps(instance.id, oldProps, newProps)
@@ -201,11 +254,16 @@ const hostConfig = {
   hideInstance(instance: Instance): void {
     native().setStyle(instance.id, { ...(instance.props.style ?? {}), visibility: "hidden" })
   },
-  unhideInstance(instance: Instance): void { native().setStyle(instance.id, instance.props.style ?? {}) },
+  unhideInstance(instance: Instance): void { native().setStyle(instance.id, resolvedStyle(instance.id, instance.props.style) ?? {}) },
   hideTextInstance(): void {},
   unhideTextInstance(): void {},
   detachDeletedInstance(instance: Instance): void {
-    for (const id of native().destroyElement(instance.id)) unregisterEvent(id)
+    for (const id of native().destroyElement(instance.id)) {
+      unregisterEvent(id)
+      instances.delete(id)
+      hoveredInstances.delete(id)
+      activeInstances.delete(id)
+    }
   },
 
   scheduleTimeout: setTimeout,
@@ -270,6 +328,7 @@ export function render(node: React.ReactNode, options: WindowOptions = {}): Blen
   )
 
   renderer.setEventCallback((event) => {
+    applyPointerStyle(renderer, event)
     flushSync(() => dispatchEvent(event))
   })
   flushSync(() => reconciler.updateContainer(node, container, null, () => {}))
@@ -283,6 +342,9 @@ export function render(node: React.ReactNode, options: WindowOptions = {}): Blen
     flushSync(() => reconciler.updateContainer(null, container, null, () => {}))
     renderer.shutdown()
     if (activeRenderer === renderer) activeRenderer = null
+    instances.clear()
+    hoveredInstances.clear()
+    activeInstances.clear()
   }
   const tick = (): void => {
     if (stopped) return

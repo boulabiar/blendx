@@ -116,6 +116,18 @@ npm run logs
 npm run logs:benchmark
 ```
 
+The floating-controls gallery demonstrates the reusable `Tooltip`, `Select`,
+and `Combobox` components together with hover/active styles, element-relative
+anchoring, outside-click dismissal, and keyboard focus:
+
+```bash
+npm run components
+npm run components:benchmark
+```
+
+See [`COMPONENTS.md`](COMPONENTS.md) for the compound APIs and interaction
+foundation.
+
 To create a standalone executable containing the lean Hermes VM, React,
 react-reconciler, the application bytecode, the native renderer, and static
 Blend2D:
@@ -139,6 +151,10 @@ npm run compile:dashboard
 # And the live log explorer:
 npm run compile:logs
 ./build/blendx-logs
+
+# And the floating-controls gallery:
+npm run compile:components
+./build/blendx-components
 ```
 
 The executable still uses the target operating system's SDL2 and GUI libraries.
@@ -186,9 +202,12 @@ Blend2D's shared thread pool.
   a useful SVG path/shape subset, retained canvas commands, Markdown blocks,
   line-numbered code, colored diffs, badges, separators, and progress bars
 - Input: mouse down/up/click, wheel scrolling, deepest-node hit testing,
-  keyboard focus, UTF-8 text input, Backspace, Enter, change/submit/key events
+  hover/active states, outside presses, Tab focus traversal, UTF-8 text input,
+  Backspace, Enter/Space activation, change/submit/key-down/key-up events
 - Overlays: out-of-flow anchored nodes with top/right/bottom/left placement,
-  start/center/end alignment, gaps, and x/y offsets
+  start/center/end alignment, element-ref or point anchors, viewport clamping,
+  gaps, and x/y offsets
+- Components: compound `Tooltip`, `Select`, and filterable `Combobox`
 - Window: resize and close handling through SDL2
 - Renderer: PRGB32 Blend2D framebuffer, coalesced damage rectangles, partial
   framebuffer presentation, runtime-selected Blend2D SIMD/JIT pipelines

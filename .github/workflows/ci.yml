@@ -48,5 +48,8 @@ jobs:
       - name: Run the live log explorer
         run: node tools/hermes-app.mjs run examples/logs.tsx -- --headless
 
+      - name: Run floating controls under Hermes
+        run: node tools/hermes-app.mjs run examples/components.tsx -- --headless
+
       - name: Verify the packed executable
         run: node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat && ./build/blendx-chat --headless

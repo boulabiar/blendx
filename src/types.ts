@@ -1,4 +1,4 @@
-import type { Key, ReactNode } from "react"
+import type { Key, ReactNode, Ref } from "react"
 
 export type Color = `#${string}`
 export type Length = number | `${number}%`
@@ -48,6 +48,9 @@ export interface Style {
   cursor?: "default" | "pointer" | "text"
   whiteSpace?: "normal" | "nowrap" | "pre" | "preWrap"
   textOverflow?: "clip" | "ellipsis"
+  /** Native pointer-state overrides. */
+  hover?: Omit<Style, "hover" | "active">
+  active?: Omit<Style, "hover" | "active">
 }
 
 export interface BlendxEvent {
@@ -56,10 +59,14 @@ export interface BlendxEvent {
     | "click"
     | "mouseDown"
     | "mouseUp"
+    | "mouseEnter"
+    | "mouseLeave"
+    | "mouseDownOutside"
     | "scroll"
     | "change"
     | "submit"
     | "keyDown"
+    | "keyUp"
     | "focus"
     | "blur"
   x: number
@@ -68,6 +75,11 @@ export interface BlendxEvent {
   deltaY: number
   value?: string
   key?: string
+}
+
+export interface BlendxElement {
+  id: number
+  type: string
 }
 
 export type CanvasCommand =
@@ -81,15 +93,20 @@ export interface AnchorPosition { x: number; y: number }
 
 export interface HostProps {
   key?: Key | null
+  ref?: Ref<BlendxElement>
   children?: ReactNode
   style?: Style
   onClick?: (event: BlendxEvent) => void
   onMouseDown?: (event: BlendxEvent) => void
   onMouseUp?: (event: BlendxEvent) => void
+  onMouseEnter?: (event: BlendxEvent) => void
+  onMouseLeave?: (event: BlendxEvent) => void
+  onMouseDownOutside?: (event: BlendxEvent) => void
   onScroll?: (event: BlendxEvent) => void
   onChange?: (event: BlendxEvent) => void
   onSubmit?: (event: BlendxEvent) => void
   onKeyDown?: (event: BlendxEvent) => void
+  onKeyUp?: (event: BlendxEvent) => void
   onFocus?: (event: BlendxEvent) => void
   onBlur?: (event: BlendxEvent) => void
   /** Uniform row height used by `virtual-list`. */
@@ -97,6 +114,8 @@ export interface HostProps {
   /** Extra rows painted above and below the viewport. */
   overdraw?: number
   estimatedItemHeight?: number
+  alignment?: "top" | "bottom"
+  followTail?: boolean
   src?: string
   alt?: string
   objectFit?: "fill" | "contain" | "cover" | "scaleDown" | "none"
@@ -115,12 +134,16 @@ export interface HostProps {
   minRows?: number
   maxRows?: number
   autoFocus?: boolean
+  tabIndex?: number
+  disabled?: boolean
   position?: AnchorPosition
   side?: "top" | "right" | "bottom" | "left"
   align?: "start" | "center" | "end"
   anchor?: "topLeft" | "topCenter" | "topRight" | "rightCenter" | "bottomRight" | "bottomCenter" | "bottomLeft" | "leftCenter"
   offset?: AnchorPosition
   anchorGap?: number
+  /** Native element ID used as the overlay anchor. */
+  anchorId?: number
 }
 
 export interface WindowOptions {
@@ -181,6 +204,13 @@ export interface NativeRenderer {
   poll(): boolean
   renderFrame(): void
   getStats(): NativeStats
+  focusElement(id: number): void
+  /** Headless/native automation helpers used by integration tests. */
+  dispatchPointer(kind: "mouseMove" | "mouseDown" | "mouseUp" | "click", x: number, y: number, button?: number): void
+  dispatchKey(key: string): void
+  scrollToItem(id: number, index: number): void
+  getElementBox(id: number): { x: number; y: number; width: number; height: number }
+  captureScreenshot(path: string): void
 }
 
 export interface BlendxRoot {

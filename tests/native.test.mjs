@@ -90,6 +90,28 @@ test("virtual-list lays out and paints only viewport rows", () => {
   native.shutdown()
 })
 
+test("flex growth overrides a zero-width basis with equal computed widths", () => {
+  native.init({ width: 600, height: 100, headless: true })
+  const batch = [
+    ["create", 1, "div"],
+    ["style", 1, { width: "100%", height: "100%", flexDirection: "row", gap: 12 }],
+  ]
+  for (let id = 2; id <= 4; id++) {
+    batch.push(["create", id, "div"])
+    batch.push(["style", id, { width: 0, height: 80, flexGrow: 1 }])
+    batch.push(["append", 1, id])
+  }
+  batch.push(["root", 1])
+  native.applyBatch(batch)
+  native.commitMutations()
+  native.renderFrame()
+
+  const boxes = [2, 3, 4].map((id) => native.getElementBox(id))
+  assert.deepEqual(boxes.map((box) => box.width), [192, 192, 192])
+  assert.deepEqual(boxes.map((box) => box.x), [0, 204, 408])
+  native.shutdown()
+})
+
 test("renders rich elements, structured props, and absolute overlays", () => {
   native.init({ width: 640, height: 480, headless: true })
   const elements = ["img", "svg", "canvas", "button", "separator", "badge", "progress", "markdown", "code", "diff", "textarea", "anchored"]

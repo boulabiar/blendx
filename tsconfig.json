@@ -18,6 +18,6 @@
       "blendx/jsx-dev-runtime": ["./src/jsx-dev-runtime.ts"]
     }
   },
-  "include": ["src/**/*.ts", "examples/**/*.tsx"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "examples/**/*.tsx"],
   "exclude": ["dist", "build", "node_modules"]
 }
