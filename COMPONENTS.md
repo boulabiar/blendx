@@ -76,3 +76,13 @@ dismissal.
 Variable-height memory-windowed lists, full text selection/editing, modal focus
 trapping, native motion, accessibility nodes, and IME composition remain
 separate deeper renderer projects.
+
+## Selection and value controls
+
+`Checkbox`, `Switch`, `RadioGroup`, and `Slider` support controlled and
+uncontrolled state, disabled states, focus styling, pointer interaction, and
+keyboard activation. Radio groups use arrow-key selection. Sliders support
+single values or two-thumb ranges, step snapping, pointer dragging, arrows,
+Home, and End.
+
+Run the visual control surface with `npm run controls`.

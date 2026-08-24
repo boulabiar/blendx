@@ -42,6 +42,8 @@
     "logs:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/logs.tsx -- --headless",
     "components": "npm run build:native && node tools/hermes-app.mjs run examples/components.tsx --",
     "components:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/components.tsx -- --headless",
+    "controls": "npm run build:native && node tools/hermes-app.mjs run examples/controls.tsx --",
+    "controls:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/controls.tsx -- --headless",
     "benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/stress.tsx -- --headless",
     "bytecode:chat": "node tools/hermes-app.mjs bytecode examples/chat.tsx",
     "compile:chat": "npm run build:native && node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat",
@@ -50,6 +52,7 @@
     "compile:dashboard": "npm run build:native && node tools/hermes-app.mjs pack examples/dashboard.tsx build/blendx-dashboard",
     "compile:logs": "npm run build:native && node tools/hermes-app.mjs pack examples/logs.tsx build/blendx-logs",
     "compile:components": "npm run build:native && node tools/hermes-app.mjs pack examples/components.tsx build/blendx-components",
+    "compile:controls": "npm run build:native && node tools/hermes-app.mjs pack examples/controls.tsx build/blendx-controls",
     "test": "npm run build && npm run build:test-addon && node --test tests/*.test.mjs"
   },
   "dependencies": {

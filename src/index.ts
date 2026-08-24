@@ -49,6 +49,7 @@ const eventProps = [
   ["onClick", "click"],
   ["onMouseDown", "mouseDown"],
   ["onMouseUp", "mouseUp"],
+  ["onMouseMove", "mouseMove"],
   ["onMouseEnter", "mouseEnter"],
   ["onMouseLeave", "mouseLeave"],
   ["onMouseDownOutside", "mouseDownOutside"],
@@ -299,6 +300,13 @@ const reconcilerWithSync = reconciler as typeof reconciler & {
   flushSyncFromReconciler?: (callback: () => void) => void
 }
 
+function reportRenderError(error: unknown, info?: { componentStack?: string }): void {
+  const detail = error && typeof error === "object" && "stack" in error
+    ? String((error as { stack?: unknown }).stack ?? error)
+    : String(error)
+  console.error(`${detail}${info?.componentStack ?? ""}`)
+}
+
 function flushSync(callback: () => void): void {
   const flush = reconcilerWithSync.flushSyncFromReconciler ?? reconciler.flushSync
   flush(callback)
@@ -321,9 +329,9 @@ export function render(node: React.ReactNode, options: WindowOptions = {}): Blen
     false,
     null,
     "blendx",
-    console.error,
-    console.error,
-    console.error,
+    reportRenderError,
+    reportRenderError,
+    reportRenderError,
     null
   )
 

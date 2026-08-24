@@ -20,6 +20,11 @@ const {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
+  Checkbox,
+  RadioGroup,
+  RadioGroupItem,
+  Switch,
+  Slider,
 } = await import("../dist/src/index.js")
 
 function pointer(native, kind, x, y) {
@@ -136,4 +141,54 @@ test("Combobox opens from its native input and selects a filtered-list item", as
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal(selected, "Next.js")
   app.stop()
+})
+
+test("selection controls respond to pointer and keyboard interaction", async () => {
+  let checked = false
+  let switched = false
+  let radio = "alpha"
+  let slider = 0
+  const h = React.createElement
+  const app = render(
+    h("div", { style: { width: "100%", height: "100%", padding: 10, gap: 10 } },
+      h(Checkbox, { onCheckedChange: (value) => { checked = value }, style: { width: 40, height: 30 } }),
+      h(Switch, { onCheckedChange: (value) => { switched = value }, style: { width: 50, height: 30 } }),
+      h(RadioGroup, { defaultValue: "alpha", onValueChange: (value) => { radio = value }, style: { width: 100, height: 60, gap: 4 } },
+        h(RadioGroupItem, { value: "alpha", style: { width: 100, height: 28 } }),
+        h(RadioGroupItem, { value: "beta", style: { width: 100, height: 28 } })),
+      h(Slider, { onValueChange: (value) => { slider = value }, style: { width: 200, height: 24 } })),
+    { width: 320, height: 240, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  try {
+    click(globalThis.__blendxNative, 20, 20)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(checked, true)
+    globalThis.__blendxNative.dispatchKey("Space")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(checked, false)
+
+    click(globalThis.__blendxNative, 20, 60)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(switched, true)
+
+    click(globalThis.__blendxNative, 20, 132)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(radio, "beta")
+    globalThis.__blendxNative.dispatchKey("ArrowLeft")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(radio, "alpha")
+
+    pointer(globalThis.__blendxNative, "mouseDown", 110, 182)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    pointer(globalThis.__blendxNative, "mouseMove", 300, 182)
+    pointer(globalThis.__blendxNative, "mouseUp", 300, 182)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(slider, 100)
+    globalThis.__blendxNative.dispatchKey("ArrowLeft")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(slider, 99)
+  } finally {
+    app.stop()
+  }
 })

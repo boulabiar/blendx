@@ -39,6 +39,8 @@ export interface Style {
   right?: number
   top?: number
   bottom?: number
+  /** Paint order within the parent; larger values are drawn on top. */
+  zIndex?: number
   maxWidth?: Length
   maxHeight?: Length
   flexShrink?: number
@@ -59,6 +61,7 @@ export interface BlendxEvent {
     | "click"
     | "mouseDown"
     | "mouseUp"
+    | "mouseMove"
     | "mouseEnter"
     | "mouseLeave"
     | "mouseDownOutside"
@@ -99,6 +102,7 @@ export interface HostProps {
   onClick?: (event: BlendxEvent) => void
   onMouseDown?: (event: BlendxEvent) => void
   onMouseUp?: (event: BlendxEvent) => void
+  onMouseMove?: (event: BlendxEvent) => void
   onMouseEnter?: (event: BlendxEvent) => void
   onMouseLeave?: (event: BlendxEvent) => void
   onMouseDownOutside?: (event: BlendxEvent) => void

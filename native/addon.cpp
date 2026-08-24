@@ -67,6 +67,7 @@ struct Style {
   std::optional<double> right;
   std::optional<double> top;
   std::optional<double> bottom;
+  double z_index = 0.0;
   Dimension max_width;
   Dimension max_height;
 
@@ -94,7 +95,8 @@ struct Style {
     return background == other.background && color == other.color &&
            border_color == other.border_color && border_radius == other.border_radius &&
            border_width == other.border_width && opacity == other.opacity &&
-           visible == other.visible && overflow == other.overflow;
+           visible == other.visible && overflow == other.overflow &&
+           z_index == other.z_index;
   }
 };
 
@@ -291,6 +293,7 @@ class Renderer {
     frame_samples_.clear();
     focused_id_ = 0;
     hovered_id_ = 0;
+    pointer_capture_id_ = 0;
     dirty_regions_.clear();
     dirty_nodes_.clear();
     scrolling_nodes_.clear();
@@ -337,6 +340,7 @@ class Renderer {
     scrolling_nodes_.erase(id);
     if (focused_id_ == id) focused_id_ = 0;
     if (hovered_id_ == id) hovered_id_ = 0;
+    if (pointer_capture_id_ == id) pointer_capture_id_ = 0;
     if (root_id_ == id) root_id_ = 0;
     dirty_ = true;
   }
@@ -431,11 +435,12 @@ class Renderer {
     if (enabled) target->events.insert(kind);
     else target->events.erase(kind);
   }
-  void focus_element(napi_env env, napi_ref callback_ref, uint64_t id) {
+  void focus_element(napi_env env, napi_ref callback_ref, uint64_t id,
+                     bool programmatic = false) {
     Node* target = node(id);
     if (id && (!target || bool_prop(*target, "disabled") ||
-               number_prop(*target, "tabIndex", target->type == "button" ||
-                                                   target->handler->kind == ElementHandler::Kind::kInput ? 0.0 : -1.0) < 0.0)) {
+               (!programmatic && number_prop(*target, "tabIndex", target->type == "button" ||
+                                                   target->handler->kind == ElementHandler::Kind::kInput ? 0.0 : -1.0) < 0.0))) {
       return;
     }
     if (focused_id_ == id) return;
@@ -456,18 +461,24 @@ class Renderer {
                         double x, double y, int button) {
     if (kind == "mouseMove") {
       update_hover(env, callback_ref, x, y);
+      emit_pointer(env, callback_ref, "mouseMove", x, y, button, 0.0, pointer_capture_id_);
       return;
     }
     if (kind == "click") {
       emit_pointer(env, callback_ref, "click", x, y, button);
       return;
     }
-    emit_pointer(env, callback_ref, kind, x, y, button);
     if (kind == "mouseDown") {
+      pointer_capture_id_ = hit_test(root_id_, x, y, "mouseDown");
+      emit_pointer(env, callback_ref, kind, x, y, button, 0.0, pointer_capture_id_);
       emit_outside(env, callback_ref, x, y);
       focus_element(env, callback_ref, hit_test_focusable(root_id_, x, y));
     } else if (kind == "mouseUp") {
+      emit_pointer(env, callback_ref, kind, x, y, button, 0.0, pointer_capture_id_);
       emit_pointer(env, callback_ref, "click", x, y, button);
+      pointer_capture_id_ = 0;
+    } else {
+      emit_pointer(env, callback_ref, kind, x, y, button);
     }
   }
   void dispatch_key(napi_env env, napi_ref callback_ref, const std::string& key) {
@@ -546,19 +557,24 @@ class Renderer {
         } else if (event.type == SDL_MOUSEBUTTONDOWN ||
                    event.type == SDL_MOUSEBUTTONUP) {
           const char* kind = event.type == SDL_MOUSEBUTTONDOWN ? "mouseDown" : "mouseUp";
-          emit_pointer(env, event_callback, kind, event.button.x, event.button.y,
-                       event.button.button);
           if (event.type == SDL_MOUSEBUTTONDOWN) {
+            pointer_capture_id_ = hit_test(root_id_, event.button.x, event.button.y, kind);
+            emit_pointer(env, event_callback, kind, event.button.x, event.button.y,
+                         event.button.button, 0.0, pointer_capture_id_);
             emit_outside(env, event_callback, event.button.x, event.button.y);
             const uint64_t focus_id = hit_test_focusable(root_id_, event.button.x, event.button.y);
             focus_element(env, event_callback, focus_id);
-          }
-          if (event.type == SDL_MOUSEBUTTONUP) {
+          } else {
+            emit_pointer(env, event_callback, kind, event.button.x, event.button.y,
+                         event.button.button, 0.0, pointer_capture_id_);
             emit_pointer(env, event_callback, "click", event.button.x, event.button.y,
                          event.button.button);
+            pointer_capture_id_ = 0;
           }
         } else if (event.type == SDL_MOUSEMOTION) {
           update_hover(env, event_callback, event.motion.x, event.motion.y);
+          emit_pointer(env, event_callback, "mouseMove", event.motion.x, event.motion.y, 0,
+                       0.0, pointer_capture_id_);
         } else if (event.type == SDL_MOUSEWHEEL) {
           int mouse_x = 0;
           int mouse_y = 0;
@@ -1528,8 +1544,17 @@ class Renderer {
         paint_node(context, n->children[i], color, font_size, damage);
       }
     } else {
-      for (uint64_t child : n->children) {
-        paint_node(context, child, color, font_size, damage);
+      const bool layered = std::any_of(n->children.begin(), n->children.end(), [this](uint64_t child) {
+        return nodes_.at(child).style.z_index != 0.0;
+      });
+      if (layered) {
+        std::vector<uint64_t> paint_order = n->children;
+        std::stable_sort(paint_order.begin(), paint_order.end(), [this](uint64_t a, uint64_t b) {
+          return nodes_.at(a).style.z_index < nodes_.at(b).style.z_index;
+        });
+        for (uint64_t child : paint_order) paint_node(context, child, color, font_size, damage);
+      } else {
+        for (uint64_t child : n->children) paint_node(context, child, color, font_size, damage);
       }
     }
     if (clips_children) context.restore();
@@ -1665,10 +1690,13 @@ class Renderer {
   }
 
   void emit_pointer(napi_env env, napi_ref callback_ref, const std::string& event,
-                    double x, double y, int button, double delta_y = 0.0) {
+                    double x, double y, int button, double delta_y = 0.0,
+                    uint64_t forced_id = 0) {
     if (!callback_ref || !root_id_) return;
-    const uint64_t hit = hit_test(root_id_, x, y, event);
+    const uint64_t hit = forced_id ? forced_id : hit_test(root_id_, x, y, event);
     if (!hit) return;
+    auto target = nodes_.find(hit);
+    if (target == nodes_.end() || !target->second.events.count(event)) return;
     napi_value callback;
     napi_value global;
     napi_value payload;
@@ -1756,6 +1784,7 @@ class Renderer {
   std::vector<double> frame_samples_;
   uint64_t focused_id_ = 0;
   uint64_t hovered_id_ = 0;
+  uint64_t pointer_capture_id_ = 0;
   std::chrono::steady_clock::time_point last_poll_at_ = std::chrono::steady_clock::now();
 };
 
@@ -1969,6 +1998,7 @@ Style style_from_js(napi_env env, napi_value object) {
   if (auto value = property(env, object, "right")) style.right = number(env, value);
   if (auto value = property(env, object, "top")) style.top = number(env, value);
   if (auto value = property(env, object, "bottom")) style.bottom = number(env, value);
+  if (auto value = property(env, object, "zIndex")) style.z_index = number(env, value);
   style.max_width = dimension(env, property(env, object, "maxWidth"));
   style.max_height = dimension(env, property(env, object, "maxHeight"));
   if (auto value = property(env, object, "alignItems")) {
@@ -2177,7 +2207,7 @@ napi_value render_frame(napi_env env, napi_callback_info) {
 
 napi_value focus_element(napi_env env, napi_callback_info info) {
   auto values = args(env, info, 1);
-  if (!values.empty()) renderer.focus_element(env, event_callback, id_arg(env, values[0]));
+  if (!values.empty()) renderer.focus_element(env, event_callback, id_arg(env, values[0]), true);
   return undefined(env);
 }
 
