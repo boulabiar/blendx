@@ -7,7 +7,7 @@ export interface VirtualListHandle {
   scrollToOffset(offset: number): void
 }
 
-export interface VirtualListProps<T> extends Omit<HostProps, "children" | "onScroll"> {
+export interface VirtualListProps<T> extends Omit<HostProps, "children" | "onScroll" | "ref"> {
   items: readonly T[]
   renderItem: (item: T, index: number) => React.ReactNode
   estimatedItemHeight: number
@@ -112,7 +112,9 @@ function VirtualListInner<T>(
   React.useLayoutEffect(() => {
     const timer = setTimeout(() => {
       if (!element.current) return
-      const box = loadNativeRenderer().getElementBox(element.current.id)
+      const renderer = loadNativeRenderer()
+      renderer.renderFrame()
+      const box = renderer.getElementBox(element.current.id)
       if (box.height > 0) setViewport(box.height)
     }, 0)
     return () => clearTimeout(timer)

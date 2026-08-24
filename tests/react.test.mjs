@@ -161,6 +161,11 @@ test("Dialog traps focus, dismisses outside, and restores its trigger", async ()
     click(globalThis.__blendxNative, 20, 15)
     await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(open, true)
+    const modal = app.renderer.getAccessibilityTree().find((node) => node.role === "dialog")
+    assert.deepEqual(
+      modal && { x: modal.x, y: modal.y, width: modal.width, height: modal.height },
+      { x: 0, y: 0, width: 300, height: 200 },
+    )
     globalThis.__blendxNative.dispatchKey("Tab")
     await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(outsideFocused, false)

@@ -17,6 +17,8 @@ export type {
   BlendxEvent,
   BlendxElement,
   BlendxRoot,
+  Color,
+  Length,
   CanvasCommand,
   AnchorPosition,
   HostProps,

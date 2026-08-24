@@ -129,6 +129,20 @@ npm run components:benchmark
 See [`COMPONENTS.md`](COMPONENTS.md) for the compound APIs and interaction
 foundation.
 
+The application-foundation gallery brings the newer primitives together in one
+interactive screen: dialogs, toast notifications, declarative motion,
+multiline/password editing, wrapped selectable text, accessibility inspection,
+and a variable-height memory-windowed activity feed:
+
+```bash
+npm run foundation
+npm run foundation:benchmark
+```
+
+Try the modal's Tab/Escape behavior, generate notifications, toggle the motion
+target, edit/select text, inspect semantic nodes, jump to row 300, and append a
+follow-tail activity record.
+
 To create a standalone executable containing the lean Hermes VM, React,
 react-reconciler, the application bytecode, the native renderer, and static
 Blend2D:
@@ -156,6 +170,10 @@ npm run compile:logs
 # And the floating-controls gallery:
 npm run compile:components
 ./build/blendx-components
+
+# And the application-foundation gallery:
+npm run compile:foundation
+./build/blendx-foundation
 ```
 
 The executable still uses the target operating system's SDL2 and GUI libraries.

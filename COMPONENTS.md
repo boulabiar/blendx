@@ -130,3 +130,7 @@ tree, so large data sets do not inflate renderer memory.
 `motion.div`, `motion.text`, and `motion.button` interpolate numeric style
 properties using declarative `initial`, `animate`, and `transition` props. The
 timeline is currently driven by React frames rather than a native compositor.
+
+Run `npm run foundation` for a combined visual gallery of `Dialog`, toast,
+motion, advanced editor input, selectable wrapped text, accessibility-tree
+inspection, and a variable-height `VirtualList`.

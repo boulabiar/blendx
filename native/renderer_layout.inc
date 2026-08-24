@@ -228,6 +228,21 @@
         const double positioning_y = fixed ? 0.0 : inner_y;
         const double positioning_w = fixed ? static_cast<double>(width_) : inner_w;
         const double positioning_h = fixed ? static_cast<double>(height_) : inner_h;
+        if (fixed) {
+          // Fixed descendants resolve percentages against the viewport, not
+          // against whichever small in-flow component happens to own them.
+          const Size fixed_natural = natural_size(child->id, positioning_w);
+          child_w = child->style.width.resolve(positioning_w, fixed_natural.w);
+          child_h = child->style.height.resolve(positioning_h, fixed_natural.h);
+          child_w = std::max(child_w, child->style.min_width);
+          child_h = std::max(child_h, child->style.min_height);
+          if (child->style.max_width.set) {
+            child_w = std::min(child_w, child->style.max_width.resolve(positioning_w, child_w));
+          }
+          if (child->style.max_height.set) {
+            child_h = std::min(child_h, child->style.max_height.resolve(positioning_h, child_h));
+          }
+        }
         double absolute_x = positioning_x + child->style.left.value_or(0.0);
         double absolute_y = positioning_y + child->style.top.value_or(0.0);
         if (!child->style.width.set && child->style.left && child->style.right) {
@@ -325,4 +340,3 @@
     return box.x < rect.x + rect.w && rect.x < box.x + box.w &&
            box.y < rect.y + rect.h && rect.y < box.y + box.h;
   }
-

@@ -48,6 +48,8 @@
     "disclosure:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/disclosure.tsx -- --headless",
     "menus": "npm run build:native && node tools/hermes-app.mjs run examples/menus.tsx --",
     "menus:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/menus.tsx -- --headless",
+    "foundation": "npm run build:native && node tools/hermes-app.mjs run examples/foundation.tsx --",
+    "foundation:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/foundation.tsx -- --headless",
     "benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/stress.tsx -- --headless",
     "bytecode:chat": "node tools/hermes-app.mjs bytecode examples/chat.tsx",
     "compile:chat": "npm run build:native && node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat",
@@ -59,6 +61,7 @@
     "compile:controls": "npm run build:native && node tools/hermes-app.mjs pack examples/controls.tsx build/blendx-controls",
     "compile:disclosure": "npm run build:native && node tools/hermes-app.mjs pack examples/disclosure.tsx build/blendx-disclosure",
     "compile:menus": "npm run build:native && node tools/hermes-app.mjs pack examples/menus.tsx build/blendx-menus",
+    "compile:foundation": "npm run build:native && node tools/hermes-app.mjs pack examples/foundation.tsx build/blendx-foundation",
     "test": "npm run build && npm run build:test-addon && node --test tests/*.test.mjs"
   },
   "dependencies": {
