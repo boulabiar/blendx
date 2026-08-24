@@ -25,6 +25,17 @@ const {
   RadioGroupItem,
   Switch,
   Slider,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
 } = await import("../dist/src/index.js")
 
 function pointer(native, kind, x, y) {
@@ -188,6 +199,60 @@ test("selection controls respond to pointer and keyboard interaction", async () 
     globalThis.__blendxNative.dispatchKey("ArrowLeft")
     await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(slider, 99)
+  } finally {
+    app.stop()
+  }
+})
+
+test("tabs, accordion, and collapsible implement pointer and keyboard state", async () => {
+  let tab = "overview"
+  let accordion = "first"
+  let focusedAccordion = ""
+  let collapsedOpen = false
+  const h = React.createElement
+  const app = render(
+    h("div", { style: { width: "100%", height: "100%", position: "relative" } },
+      h(Tabs, { defaultValue: "overview", onValueChange: (value) => { tab = value }, style: { width: 300, height: 82, position: "absolute", left: 10, top: 10, gap: 4 } },
+        h(TabsList, { style: { width: 300, height: 32, flexDirection: "row" } },
+          h(TabsTrigger, { value: "overview", style: { width: 100, height: 32 } }, "Overview"),
+          h(TabsTrigger, { value: "activity", style: { width: 100, height: 32 } }, "Activity"),
+          h(TabsTrigger, { value: "disabled", disabled: true, style: { width: 100, height: 32 } }, "Disabled")),
+        h(TabsContent, { value: "overview", style: { width: 300, height: 40 } }, "Overview panel"),
+        h(TabsContent, { value: "activity", style: { width: 300, height: 40 } }, "Activity panel")),
+      h(Accordion, { defaultValue: "first", collapsible: true, onValueChange: (value) => { accordion = value }, style: { width: 300, position: "absolute", left: 10, top: 110, gap: 4 } },
+        h(AccordionItem, { value: "first", style: { width: 300 } },
+          h(AccordionTrigger, { onFocus: () => { focusedAccordion = "first" }, style: { width: 300, height: 30 } }, "First"),
+          h(AccordionContent, { style: { width: 300, height: 24 } }, "First content")),
+        h(AccordionItem, { value: "second", style: { width: 300 } },
+          h(AccordionTrigger, { onFocus: () => { focusedAccordion = "second" }, style: { width: 300, height: 30 } }, "Second"),
+          h(AccordionContent, { style: { width: 300, height: 24 } }, "Second content"))),
+      h(Collapsible, { onOpenChange: (value) => { collapsedOpen = value }, style: { width: 300, position: "absolute", left: 10, top: 250 } },
+        h(CollapsibleTrigger, { style: { width: 300, height: 32 } }, "Toggle"),
+        h(CollapsibleContent, { style: { width: 300, height: 30 } }, "Details"))),
+    { width: 360, height: 340, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  try {
+    click(globalThis.__blendxNative, 130, 25)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(tab, "activity")
+    globalThis.__blendxNative.dispatchKey("ArrowLeft")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(tab, "overview")
+
+    click(globalThis.__blendxNative, 20, 125)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(accordion, "")
+    globalThis.__blendxNative.dispatchKey("ArrowDown")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(focusedAccordion, "second")
+
+    click(globalThis.__blendxNative, 20, 265)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(collapsedOpen, true)
+    globalThis.__blendxNative.dispatchKey("Space")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(collapsedOpen, false)
   } finally {
     app.stop()
   }

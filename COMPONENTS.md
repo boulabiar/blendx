@@ -86,3 +86,15 @@ single values or two-thumb ranges, step snapping, pointer dragging, arrows,
 Home, and End.
 
 Run the visual control surface with `npm run controls`.
+
+## Navigation and disclosure
+
+`Tabs` supports horizontal or vertical orientation, automatic or manual
+activation, disabled triggers, roving focus, arrows, Home, and End.
+
+`Accordion` supports single or multiple expanded items, controlled and
+uncontrolled state, collapsible single items, disabled items, and keyboard
+focus navigation. `Collapsible` provides the smaller standalone disclosure
+primitive.
+
+Run the combined workspace-settings example with `npm run disclosure`.
