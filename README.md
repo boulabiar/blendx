@@ -74,6 +74,17 @@ npm run chat -- --messages=20000
 Click **Model** to show the anchored overlay, type in the composer, use
 Ctrl+Enter to submit, and scroll the transcript with the mouse wheel.
 
+The native-text showcase ports GPUix's Markdown, highlighted-code, and diff
+composition into a polished BlendX release-review screen:
+
+```bash
+npm run showcase
+# repeatable headless smoke/performance run
+npm run showcase:benchmark
+```
+
+Use **Change sample** to update the code and diff in one React commit.
+
 To create a standalone executable containing the lean Hermes VM, React,
 react-reconciler, the application bytecode, the native renderer, and static
 Blend2D:
@@ -81,6 +92,10 @@ Blend2D:
 ```bash
 npm run compile:chat
 ./build/blendx-chat
+
+# The showcase can be packed in the same way:
+npm run compile:showcase
+./build/blendx-showcase
 ```
 
 The executable still uses the target operating system's SDL2 and GUI libraries.

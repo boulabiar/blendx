@@ -32,9 +32,12 @@
     "stress": "npm run build:native && node tools/hermes-app.mjs run examples/stress.tsx --",
     "chat": "npm run build:native && node tools/hermes-app.mjs run examples/chat.tsx --",
     "chat:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/chat.tsx -- --headless",
+    "showcase": "npm run build:native && node tools/hermes-app.mjs run examples/showcase.tsx --",
+    "showcase:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/showcase.tsx -- --headless",
     "benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/stress.tsx -- --headless",
     "bytecode:chat": "node tools/hermes-app.mjs bytecode examples/chat.tsx",
     "compile:chat": "npm run build:native && node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat",
+    "compile:showcase": "npm run build:native && node tools/hermes-app.mjs pack examples/showcase.tsx build/blendx-showcase",
     "test": "npm run build && npm run build:test-addon && node --test tests/*.test.mjs"
   },
   "dependencies": {
