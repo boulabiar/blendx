@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "rootDir": ".",
+    "outDir": "dist",
+    "declaration": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "blendx",
+    "baseUrl": ".",
+    "paths": {
+      "blendx/jsx-runtime": ["./src/jsx-runtime.ts"],
+      "blendx/jsx-dev-runtime": ["./src/jsx-dev-runtime.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "examples/**/*.tsx"],
+  "exclude": ["dist", "build", "node_modules"]
+}

@@ -1,0 +1,125 @@
+# BlendX
+
+BlendX is a proof-of-concept native React renderer that draws its entire UI on
+the CPU with [Blend2D](../blend2d). It uses Blend2D's runtime-selected SIMD/JIT
+pipelines and optional worker threads; SDL2 only creates the native window,
+delivers input, and presents the CPU framebuffer.
+
+```text
+React -> react-reconciler -> Node-API mutations -> retained C++ tree
+      -> flex layout -> Blend2D BLImage -> SDL window surface
+```
+
+## Run the example
+
+Prerequisites are CMake, a C++17 compiler, SDL2 development files, Node.js 18+
+and the sibling `../blend2d` checkout built as `../blend2d/build/libblend2d.so`.
+
+```bash
+npm install
+npm run example
+```
+
+Click **Increment** to exercise the full native event-to-React-state-to-native
+mutation round trip.
+
+To run the large animated workload:
+
+```bash
+npm run stress
+```
+
+It retains 20,000 rows, paints only the visible rows, changes 320 small elements
+at 60 Hz, and prints renderer statistics once per second. Scroll the list with
+the mouse wheel. For a repeatable run without window-presentation overhead:
+
+```bash
+npm run benchmark
+```
+
+## API
+
+```tsx
+import { render } from "blendx"
+
+const app = render(
+  <div style={{ width: "100%", height: "100%", padding: 24 }}>
+    <text style={{ color: "#ffffff", fontSize: 24 }}>Hello from the CPU</text>
+  </div>,
+  { title: "My app", width: 800, height: 600, threads: 4 }
+)
+
+app.stop()
+```
+
+Setting `threads` to zero uses Blend2D's synchronous context. A positive value
+uses an asynchronous context; values above one request additional workers from
+Blend2D's shared thread pool.
+
+## Current MVP surface
+
+- Host elements: `div`, `text`
+- Layout: row/column flex subset, `flexGrow`, gap, uniform/axis padding, fixed
+  and percentage width/height
+- Paint: solid backgrounds, text, rounded rectangles, visibility
+- Input: mouse down, mouse up, click, wheel scrolling, deepest-node hit testing
+- Window: resize and close handling through SDL2
+- Renderer: PRGB32 Blend2D framebuffer, coalesced damage rectangles, partial
+  framebuffer presentation, runtime-selected Blend2D SIMD/JIT pipelines
+- Protocol: one Node-API mutation batch per React commit; unchanged style
+  objects are filtered before entering the batch
+- Virtualization: uniform-height `virtual-list` with configurable overdraw;
+  offscreen retained rows are neither laid out nor painted
+- Extensibility: native element registry maps host names to behavior handlers
+- Tests: a headless renderer mode that still executes Blend2D
+
+The style type is exported from `src/types.ts`. Unsupported properties are
+rejected by TypeScript instead of being silently treated like browser CSS.
+
+## Architecture notes
+
+React queues mutations such as `createElement`, `appendChild`, `setStyle`, and
+`setText`, then sends one array through Node-API per commit. C++ retains those
+nodes, so unchanged UI does not cross Node-API again. A mutation records the old
+damage, layout records the new damage, and overlapping rectangles are merged.
+Painting traverses only nodes intersecting each damage rectangle. The paced JS
+poll loop lets Node continue processing promises and timers while SDL events
+are pumped.
+
+`getStats()` separates `layoutTimeMs`, `paintTimeMs`, and `presentTimeMs`, and
+also reports dirty rectangles, painted pixels/nodes, mutations, and rolling
+p50/p95/maximum frame times.
+
+Blend2D chooses its SIMD implementation internally. BlendX deliberately does
+not contain handwritten intrinsics.
+
+## Current stress result
+
+On the development machine, the headless 1000×760 workload retained 40,325
+native nodes and produced the following representative result:
+
+| Measurement | Result |
+|---|---:|
+| Initial mount | 231 ms |
+| Steady frame p50 | 0.34 ms |
+| Steady frame p95 | 0.79 ms |
+| Changed mutations/frame | 38 |
+| Painted pixels/frame | 7,260–7,854 of 760,000 |
+| Painted nodes/frame | 66–70 of 40,325 |
+
+These are renderer-development numbers, not a cross-machine guarantee.
+Headless mode excludes SDL/window-server presentation. In a forwarded X11
+session, presentation dominates and should be evaluated separately from CPU
+layout and Blend2D paint time.
+
+## Adding another native element
+
+Register its name and handler kind in `ElementRegistry`, add its custom props to
+the React host types and `syncCustomProps()`, then implement its measurement,
+paint and event behavior. The protocol already transports custom numeric props;
+it can be extended with cached strings or binary resources for elements such as
+`img`, `svg`, `code`, and `markdown`.
+
+This is not yet a complete desktop toolkit. The next substantial pieces are a
+full flexbox implementation, font fallback and bidi, keyboard focus/input,
+images, richer custom-prop values, and accessibility.
