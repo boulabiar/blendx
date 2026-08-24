@@ -1,5 +1,5 @@
 import React from "react"
-import { render } from "../src/index.js"
+import { render, VirtualList } from "../src/index.js"
 
 const { memo, useEffect, useState } = React
 
@@ -26,9 +26,7 @@ const Row = memo(function Row({ index }: { index: number }) {
   )
 })
 
-const retainedRows = Array.from({ length: ROW_COUNT }, (_, index) => (
-  <Row key={index} index={index} />
-))
+const rows = Array.from({ length: ROW_COUNT }, (_, index) => index)
 
 function StressApp() {
   const [tick, setTick] = useState(0)
@@ -79,19 +77,18 @@ function StressApp() {
           )
         })}
       </div>
-      <virtual-list
-        itemHeight={36}
+      <VirtualList
+        items={rows}
+        estimatedItemHeight={36}
         overdraw={3}
         style={{
           width: "100%",
           height: 500,
           backgroundColor: "#151923",
           borderRadius: 10,
-          overflow: "scroll",
         }}
-      >
-        {retainedRows}
-      </virtual-list>
+        renderItem={(index) => <Row index={index} />}
+      />
     </div>
   )
 }

@@ -21,6 +21,7 @@ export type {
   AnchorPosition,
   HostProps,
   NativeStats,
+  AccessibilityNode,
   Style,
   WindowOptions,
 } from "./types.js"
@@ -93,8 +94,11 @@ function createBatchedRenderer(raw: NativeRenderer): NativeRenderer {
     dispatchPointer: raw.dispatchPointer.bind(raw),
     dispatchKey: raw.dispatchKey.bind(raw),
     scrollToItem: raw.scrollToItem.bind(raw),
+    scrollToOffset: raw.scrollToOffset.bind(raw),
     getElementBox: raw.getElementBox.bind(raw),
     captureScreenshot: raw.captureScreenshot.bind(raw),
+    getSelectedText: raw.getSelectedText.bind(raw),
+    getAccessibilityTree: raw.getAccessibilityTree.bind(raw),
   }
 }
 
@@ -166,9 +170,11 @@ function syncCustomProps(id: number, oldProps: HostProps | null, props: HostProp
   for (const name of [
     "itemHeight", "overdraw", "estimatedItemHeight", "alignment", "followTail", "src", "alt", "objectFit",
     "commands", "source", "code", "language", "showLineNumbers", "showHeader",
-    "patch", "wordDiff", "value", "max", "placeholder", "readOnly", "minRows",
+    "patch", "wordDiff", "value", "max", "placeholder", "readOnly", "password", "selectable", "minRows",
     "maxRows", "autoFocus", "position", "side", "align", "anchor", "offset",
-    "anchorGap", "anchorId", "tabIndex", "disabled",
+    "anchorGap", "anchorId", "tabIndex", "disabled", "modal", "accessibilityRole",
+    "accessibilityLabel", "accessibilityDescription", "accessibilityValue",
+    "accessibilityChecked", "accessibilitySelected",
   ] as const) {
     if (props[name] !== oldProps?.[name]) native().setCustomProp(id, name, props[name] ?? null)
   }
@@ -313,6 +319,9 @@ function flushSync(callback: () => void): void {
 }
 
 export function render(node: React.ReactNode, options: WindowOptions = {}): BlendxRoot {
+  if (activeRenderer) {
+    throw new Error("BlendX supports one live root per process; stop the existing root before rendering another")
+  }
   const rawRenderer = loadNativeRenderer()
   rawRenderer.init(options)
   const renderer = createBatchedRenderer(rawRenderer)
@@ -362,7 +371,7 @@ export function render(node: React.ReactNode, options: WindowOptions = {}): Blen
     }
     timer = setTimeout(tick, 8)
   }
-  tick()
+  if (!(globalThis as typeof globalThis & { __blendxNativeEventLoop?: boolean }).__blendxNativeEventLoop) tick()
 
   return {
     renderer,

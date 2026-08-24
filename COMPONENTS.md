@@ -70,12 +70,14 @@ dismissal.
   supported native events.
 - `tabIndex`, Tab/Shift+Tab traversal, programmatic `focusElement()`, and
   Enter/Space button activation are supported.
-- `virtual-list` supports fixed-height `followTail`, top/bottom alignment, and
-  native `scrollToItem()` in addition to wheel scrolling.
-
-Variable-height memory-windowed lists, full text selection/editing, modal focus
-trapping, native motion, accessibility nodes, and IME composition remain
-separate deeper renderer projects.
+- `VirtualList` memory-windows React and native rows, supports known variable
+  heights, follow-tail, visible-range reporting, scroll anchoring, and
+  imperative index/offset scrolling.
+- Input and textarea elements provide selection, clipboard, navigation,
+  undo/redo, password masking, and IME pre-edit display.
+- Accessibility roles, labels, disabled state, selection, checked state, and
+  control values are inspectable through `renderer.getAccessibilityTree()`;
+  OS accessibility adapters remain future platform work.
 
 ## Selection and value controls
 
@@ -107,5 +109,24 @@ disabled items, hover highlighting, arrows, Home, End, Enter/Space, Escape,
 single-character typeahead, outside dismissal, and focus restoration.
 
 Checkbox and radio menu items retain selection without closing by default.
+Nested submenus support pointer opening and Right/Left keyboard traversal.
 Labels and separators are shared structural primitives. Run the file-workspace
 example with `npm run menus`.
+
+## Dialog and toast
+
+`Dialog` provides controlled or uncontrolled state, trigger/close primitives,
+an outside-dismissable backdrop, Escape dismissal, modal Tab trapping, and
+focus restoration. `ToastProvider`, `useToast()`, and `ToastViewport` manage a
+timed notification queue with programmatic dismissal.
+
+## Virtual lists and motion
+
+`VirtualList<T>` accepts `items`, `renderItem`, `estimatedItemHeight`, and an
+optional `getItemHeight`. Its ref exposes `scrollToIndex()` and
+`scrollToOffset()`. Only visible rows plus overdraw exist in the React/native
+tree, so large data sets do not inflate renderer memory.
+
+`motion.div`, `motion.text`, and `motion.button` interpolate numeric style
+properties using declarative `initial`, `animate`, and `transition` props. The
+timeline is currently driven by React frames rather than a native compositor.

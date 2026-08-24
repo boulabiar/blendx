@@ -6,7 +6,7 @@
  */
 
 import React from "react"
-import { render } from "../src/index.js"
+import { render, VirtualList } from "../src/index.js"
 
 const { useEffect, useMemo, useState } = React
 
@@ -255,11 +255,14 @@ function LogsApp() {
             <text style={{ flexGrow: 1, color: C.faint, fontSize: 8 }}>MESSAGE</text>
             <text style={{ width: 55, color: C.faint, fontSize: 8 }}>DURATION</text>
           </div>
-          <virtual-list itemHeight={34} overdraw={5} estimatedItemHeight={34} style={{ width: "100%", flexGrow: 1, minHeight: 0, overflow: "scroll", backgroundColor: C.canvas }}>
-            {visible.map((entry) => (
-              <LogRow key={entry.id} entry={entry} selected={entry.id === selected.id} onSelect={() => setSelectedId(entry.id)} />
-            ))}
-          </virtual-list>
+          <VirtualList
+            items={visible}
+            estimatedItemHeight={34}
+            getItemKey={(entry) => entry.id}
+            overdraw={5}
+            style={{ width: "100%", flexGrow: 1, minHeight: 0, backgroundColor: C.canvas }}
+            renderItem={(entry) => <LogRow entry={entry} selected={entry.id === selected.id} onSelect={() => setSelectedId(entry.id)} />}
+          />
           <div style={{ height: 30, flexShrink: 0, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", backgroundColor: C.surface }}>
             <div style={{ width: 6, height: 6, backgroundColor: paused ? C.amber : C.green, borderRadius: 3 }} />
             <text style={{ marginLeft: 7, color: C.muted, fontSize: 8 }}>{visible.length.toLocaleString()} matching events</text>

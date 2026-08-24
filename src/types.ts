@@ -76,6 +76,10 @@ export interface BlendxEvent {
   y: number
   button: number
   deltaY: number
+  scrollOffset?: number
+  scrollTarget?: number
+  viewportSize?: number
+  contentSize?: number
   value?: string
   key?: string
 }
@@ -135,11 +139,20 @@ export interface HostProps {
   max?: number
   placeholder?: string
   readOnly?: boolean
+  password?: boolean
+  selectable?: boolean
   minRows?: number
   maxRows?: number
   autoFocus?: boolean
   tabIndex?: number
   disabled?: boolean
+  modal?: boolean
+  accessibilityRole?: "button" | "checkbox" | "dialog" | "heading" | "image" | "list" | "listitem" | "menu" | "menuitem" | "radio" | "slider" | "status" | "switch" | "tab" | "textbox"
+  accessibilityLabel?: string
+  accessibilityDescription?: string
+  accessibilityValue?: string
+  accessibilityChecked?: boolean | "mixed"
+  accessibilitySelected?: boolean
   position?: AnchorPosition
   side?: "top" | "right" | "bottom" | "left"
   align?: "start" | "center" | "end"
@@ -178,6 +191,21 @@ export interface NativeStats {
   threads: number
 }
 
+export interface AccessibilityNode {
+  id: number
+  role: string
+  label: string
+  description: string
+  value: string
+  checked: "" | "true" | "false" | "mixed"
+  disabled: boolean
+  selected: boolean
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export type NativeMutation =
   | ["create", number, string]
   | ["append", number, number]
@@ -213,8 +241,11 @@ export interface NativeRenderer {
   dispatchPointer(kind: "mouseMove" | "mouseDown" | "mouseUp" | "click", x: number, y: number, button?: number): void
   dispatchKey(key: string): void
   scrollToItem(id: number, index: number): void
+  scrollToOffset(id: number, offset: number): void
   getElementBox(id: number): { x: number; y: number; width: number; height: number }
   captureScreenshot(path: string): void
+  getSelectedText(): string
+  getAccessibilityTree(): AccessibilityNode[]
 }
 
 export interface BlendxRoot {

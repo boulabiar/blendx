@@ -29,6 +29,8 @@ export const Checkbox = React.forwardRef<BlendxElement, CheckboxProps>(
         <button
           {...props}
           ref={ref}
+          accessibilityRole="checkbox"
+          accessibilityChecked={checked === "indeterminate" ? "mixed" : checked}
           disabled={disabled}
           tabIndex={props.tabIndex ?? 0}
           style={resolveStyle(style, state)}
@@ -74,6 +76,8 @@ export const Switch = React.forwardRef<BlendxElement, SwitchProps>(
         <button
           {...props}
           ref={ref}
+          accessibilityRole="switch"
+          accessibilityChecked={checked}
           disabled={disabled}
           tabIndex={props.tabIndex ?? 0}
           style={resolveStyle(style, state)}
@@ -168,6 +172,8 @@ export const RadioGroupItem = React.forwardRef<BlendxElement, RadioGroupItemProp
         <button
           {...props}
           ref={setElement}
+          accessibilityRole="radio"
+          accessibilityChecked={state.checked}
           disabled={disabled}
           tabIndex={props.tabIndex ?? (state.checked ? 0 : -1)}
           style={resolveStyle(style, state)}

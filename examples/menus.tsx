@@ -15,6 +15,9 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   render,
 } from "../src/index.js"
@@ -92,6 +95,13 @@ function MenusApp() {
                 <DropdownMenuLabel style={{ height: 27, paddingHorizontal: 10, justifyContent: "center" }}><text style={{ color: C.faint, fontSize: 8 }}>APPEARANCE</text></DropdownMenuLabel>
                 <DropdownMenuCheckboxItem value="compact" checked={compact} onCheckedChange={setCompact} style={checkedItemStyle}><MenuRow icon="·" label="Compact rows" checked={compact} /></DropdownMenuCheckboxItem>
                 <DropdownMenuCheckboxItem value="hidden" checked={showHidden} onCheckedChange={setShowHidden} style={checkedItemStyle}><MenuRow icon="·" label="Show hidden files" checked={showHidden} /></DropdownMenuCheckboxItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger value="density" style={itemStyle}><MenuRow icon="›" label="Row density" hint="›" /></DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent style={{ ...menuStyle, width: 210 }}>
+                    <DropdownMenuItem value="comfortable" style={itemStyle} onSelect={() => { setCompact(false); setStatus("Comfortable rows") }}><MenuRow icon="·" label="Comfortable" /></DropdownMenuItem>
+                    <DropdownMenuItem value="dense" style={itemStyle} onSelect={() => { setCompact(true); setStatus("Compact rows") }}><MenuRow icon="·" label="Compact" checked={compact} /></DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
                 <DropdownMenuSeparator style={{ width: "100%", height: 1, marginTop: 3, marginBottom: 3, color: C.border }} />
                 <DropdownMenuLabel style={{ height: 27, paddingHorizontal: 10, justifyContent: "center" }}><text style={{ color: C.faint, fontSize: 8 }}>SORT BY</text></DropdownMenuLabel>
                 <DropdownMenuRadioGroup value={sort} onValueChange={setSort}>
@@ -102,7 +112,7 @@ function MenusApp() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          <div style={{ flexGrow: 1, padding: 18, gap: 12, backgroundColor: "#111a24", borderWidth: 1, borderColor: C.border, borderRadius: 14 }}><text style={{ color: C.text, fontSize: 12 }}>Interaction model</text>{["Pointer hover highlights items", "Outside click dismisses layers", "Arrows, Home and End navigate", "Type a letter to jump", "Checkbox and radio states persist"].map((line) => <div key={line} style={{ height: 34, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", backgroundColor: C.raised, borderRadius: 7 }}><div style={{ width: 5, height: 5, marginRight: 9, backgroundColor: C.violet, borderRadius: 3 }} /><text style={{ color: C.muted, fontSize: 9 }}>{line}</text></div>)}</div>
+          <div style={{ flexGrow: 1, padding: 18, gap: 12, backgroundColor: "#111a24", borderWidth: 1, borderColor: C.border, borderRadius: 14 }}><text style={{ color: C.text, fontSize: 12 }}>Interaction model</text>{["Pointer hover highlights items", "Outside click dismisses layers", "Arrows, Home and End navigate", "Right and Left traverse submenus", "Checkbox and radio states persist"].map((line) => <div key={line} style={{ height: 34, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", backgroundColor: C.raised, borderRadius: 7 }}><div style={{ width: 5, height: 5, marginRight: 9, backgroundColor: C.violet, borderRadius: 3 }} /><text style={{ color: C.muted, fontSize: 9 }}>{line}</text></div>)}</div>
         </div>
       </div>
     </div>

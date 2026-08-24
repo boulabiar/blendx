@@ -41,10 +41,22 @@ const {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuCheckboxItem,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
   ContextMenu,
   ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuItem,
+  VirtualList,
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogClose,
+  ToastProvider,
+  ToastViewport,
+  useToast,
+  motion,
 } = await import("../dist/src/index.js")
 
 function pointer(native, kind, x, y) {
@@ -78,6 +90,159 @@ test("React mounts through the reconciler and renders with Blend2D", async () =>
   await new Promise((resolve) => setTimeout(resolve, 25))
   assert.equal(app.renderer.getStats().frameCount, frameCount)
   app.stop()
+})
+
+test("rejects a second live root without disturbing the first", async () => {
+  const h = React.createElement
+  const app = render(h("div", { style: { width: "100%", height: "100%" } }), {
+    width: 80,
+    height: 60,
+    headless: true,
+  })
+  try {
+    assert.throws(
+      () => render(h("div", null), { width: 20, height: 20, headless: true }),
+      /one live root per process/,
+    )
+    assert.equal(app.renderer.getStats().width, 80)
+  } finally {
+    app.stop()
+  }
+})
+
+test("VirtualList memory-windows variable-height rows and scrolls by index", async () => {
+  const h = React.createElement
+  const items = Array.from({ length: 10_000 }, (_, index) => ({ id: index, height: index % 2 ? 30 : 18 }))
+  const list = React.createRef()
+  let visible = [0, 0]
+  const app = render(
+    h(VirtualList, {
+      ref: list,
+      items,
+      estimatedItemHeight: 24,
+      getItemHeight: (item) => item.height,
+      getItemKey: (item) => item.id,
+      overdraw: 2,
+      style: { width: 240, height: 120 },
+      onVisibleRangeChange: (start, end) => { visible = [start, end] },
+      renderItem: (item) => h("text", { style: { width: "100%", height: item.height } }, `Row ${item.id}`),
+    }),
+    { width: 240, height: 120, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  try {
+    assert.ok(app.renderer.getStats().nodeCount < 30, JSON.stringify(app.renderer.getStats()))
+    assert.ok(visible[1] < 12, JSON.stringify(visible))
+    list.current.scrollToIndex(9_000, "start")
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.ok(visible[0] <= 9_000 && visible[1] > 9_000, JSON.stringify(visible))
+    assert.ok(app.renderer.getStats().nodeCount < 30, JSON.stringify(app.renderer.getStats()))
+  } finally {
+    app.stop()
+  }
+})
+
+test("Dialog traps focus, dismisses outside, and restores its trigger", async () => {
+  const h = React.createElement
+  let open = false
+  let outsideFocused = false
+  let triggerFocused = 0
+  const app = render(
+    h("div", { style: { width: "100%", height: "100%", position: "relative" } },
+      h(Dialog, { onOpenChange: (value) => { open = value } },
+        h(DialogTrigger, { onFocus: () => { triggerFocused += 1 }, style: { width: 80, height: 30 } }, "Open"),
+        h(DialogContent, { style: { width: 160, height: 80, padding: 8, backgroundColor: "#202838" } },
+          h(DialogClose, { style: { width: 60, height: 24 } }, "Close"))),
+      h("button", { onFocus: () => { outsideFocused = true }, style: { width: 80, height: 30, position: "absolute", top: 160 } }, "Outside")),
+    { width: 300, height: 200, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  try {
+    click(globalThis.__blendxNative, 20, 15)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(open, true)
+    globalThis.__blendxNative.dispatchKey("Tab")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(outsideFocused, false)
+    click(globalThis.__blendxNative, 10, 100)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(open, false)
+    assert.ok(triggerFocused >= 1)
+  } finally {
+    app.stop()
+  }
+})
+
+test("Toast queues notifications and supports dismissal", async () => {
+  const h = React.createElement
+  function ToastDemo() {
+    const { toast } = useToast()
+    return h("div", { style: { width: "100%", height: "100%", position: "relative" } },
+      h("button", { onClick: () => toast({ title: "Saved", duration: 0 }), style: { width: 80, height: 30 } }, "Show"),
+      h(ToastViewport, null))
+  }
+  const app = render(h(ToastProvider, null, h(ToastDemo)), { width: 400, height: 240, headless: true })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  try {
+    const before = app.renderer.getStats().nodeCount
+    click(globalThis.__blendxNative, 20, 15)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.ok(app.renderer.getStats().nodeCount > before)
+    click(globalThis.__blendxNative, 240, 35)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(app.renderer.getStats().nodeCount, before)
+  } finally {
+    app.stop()
+  }
+})
+
+test("motion interpolates native styles and accessibility metadata is inspectable", async () => {
+  const h = React.createElement
+  const animated = React.createRef()
+  let completed = false
+  const app = render(
+    h("div", { style: { width: "100%", height: "100%" } },
+      h(motion.div, {
+        ref: animated,
+        initial: { width: 10, opacity: 0 },
+        animate: { width: 80, opacity: 1 },
+        transition: { duration: 30, easing: "linear" },
+        onAnimationComplete: () => { completed = true },
+        style: { height: 20, backgroundColor: "#ffffff" },
+      }),
+      h("button", { accessibilityLabel: "Save document", style: { width: 100, height: 30 } }, "Save")),
+    { width: 240, height: 120, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 90))
+  try {
+    assert.equal(completed, true)
+    assert.ok(app.renderer.getElementBox(animated.current.id).width >= 79)
+    const tree = app.renderer.getAccessibilityTree()
+    assert.ok(tree.some((node) => node.role === "button" && node.label === "Save document"), JSON.stringify(tree))
+  } finally {
+    app.stop()
+  }
+})
+
+test("semantic controls expose accessibility state", async () => {
+  const h = React.createElement
+  const app = render(
+    h("div", null,
+      h(Checkbox, { checked: true, accessibilityLabel: "Enable sync" }, "Sync"),
+      h(Slider, { value: 42, accessibilityLabel: "Volume" }),
+      h(Tabs, { value: "one" },
+        h(TabsList, null, h(TabsTrigger, { value: "one" }, "One")))),
+    { width: 320, height: 180, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  try {
+    const tree = app.renderer.getAccessibilityTree()
+    assert.equal(tree.find((node) => node.label === "Enable sync")?.checked, "true")
+    assert.equal(tree.find((node) => node.label === "Volume")?.value, "42")
+    assert.equal(tree.find((node) => node.role === "tab")?.selected, true)
+  } finally {
+    app.stop()
+  }
 })
 
 test("React forwards rich element properties in one native batch", async () => {
@@ -313,6 +478,34 @@ test("dropdown and context menus support keyboard, selection, and right click", 
     click(globalThis.__blendxNative, 300, 292)
     await new Promise((resolve) => setTimeout(resolve, 25))
     assert.equal(contextSelected, "inspect")
+  } finally {
+    app.stop()
+  }
+})
+
+test("dropdown submenus open from the parent keyboard model", async () => {
+  let selected = ""
+  const h = React.createElement
+  const app = render(
+    h(DropdownMenu, null,
+      h(DropdownMenuTrigger, { style: { width: 140, height: 34 } }, "Open"),
+      h(DropdownMenuContent, { style: { width: 160, padding: 4, backgroundColor: "#111827" } },
+        h(DropdownMenuItem, { value: "first", style: { width: 152, height: 30 } }, "First"),
+        h(DropdownMenuSub, null,
+          h(DropdownMenuSubTrigger, { value: "more", style: { width: 152, height: 30 } }, "More"),
+          h(DropdownMenuSubContent, { style: { width: 150, padding: 4, backgroundColor: "#182235" } },
+            h(DropdownMenuItem, { value: "nested", onSelect: () => { selected = "nested" }, style: { width: 142, height: 30 } }, "Nested"))))),
+    { width: 420, height: 220, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  try {
+    click(globalThis.__blendxNative, 30, 20)
+    globalThis.__blendxNative.dispatchKey("ArrowDown")
+    globalThis.__blendxNative.dispatchKey("ArrowRight")
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    globalThis.__blendxNative.dispatchKey("Enter")
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    assert.equal(selected, "nested")
   } finally {
     app.stop()
   }

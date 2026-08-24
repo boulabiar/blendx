@@ -9,6 +9,7 @@ type MenuEntry = {
   label: string
   disabled: boolean
   action: React.MutableRefObject<() => void>
+  submenu?: boolean
 }
 type MenuContextValue = {
   open: boolean
@@ -23,7 +24,7 @@ type MenuContextValue = {
   setActive: (value?: string) => void
   register: (entry: MenuEntry) => () => void
   move: (direction: number | "first" | "last") => void
-  activate: (value: string) => void
+  activate: (value: string, submenuOnly?: boolean) => void
   typeahead: (key: string) => void
 }
 
@@ -63,7 +64,10 @@ function useMenuState({ open: openProp, defaultOpen, onOpenChange, disabled }: {
     const index = direction === "first" ? 0 : direction === "last" ? enabled.length - 1 : (current + direction + enabled.length) % enabled.length
     setActive((enabled[index] ?? enabled[0])?.value)
   }, [active])
-  const activate = React.useCallback((value: string) => entries.current.find((entry) => entry.value === value && !entry.disabled)?.action.current(), [])
+  const activate = React.useCallback((value: string, submenuOnly = false) => {
+    const entry = entries.current.find((candidate) => candidate.value === value && !candidate.disabled)
+    if (entry && (!submenuOnly || entry.submenu)) entry.action.current()
+  }, [])
   const typeahead = React.useCallback((key: string) => {
     if (key.length !== 1) return
     const match = entries.current.find((entry) => !entry.disabled && entry.label.toLowerCase().startsWith(key.toLowerCase()))
@@ -169,6 +173,7 @@ const MenuContent = React.forwardRef<BlendxElement, FloatingContentProps>(
       <FloatingLayer
         {...props}
         ref={ref}
+        accessibilityRole="menu"
         tabIndex={0}
         autoFocus
         onMouseDownOutside={(event) => { onMouseDownOutside?.(event); menu.setOpen(false) }}
@@ -180,6 +185,7 @@ const MenuContent = React.forwardRef<BlendxElement, FloatingContentProps>(
           else if (key === "up") menu.move(-1)
           else if (key === "home") menu.move("first")
           else if (key === "end") menu.move("last")
+          else if (key === "right" && menu.active) menu.activate(menu.active, true)
           else if ((key === "enter" || key === "space") && menu.active) menu.activate(menu.active)
           else menu.typeahead(key)
         }}
@@ -209,6 +215,7 @@ const MenuItem = React.forwardRef<BlendxElement, MenuItemProps>(
       <button
         {...props}
         ref={ref}
+        accessibilityRole="menuitem"
         disabled={disabled}
         tabIndex={-1}
         style={resolveStyle(style, state)}
@@ -267,6 +274,76 @@ const MenuRadioItem = React.forwardRef<BlendxElement, MenuRadioItemProps>(
 )
 export const DropdownMenuRadioItem = MenuRadioItem
 export const ContextMenuRadioItem = MenuRadioItem
+
+const SubmenuParentContext = React.createContext<MenuContextValue | null>(null)
+
+export function DropdownMenuSub({ children, open, defaultOpen = false, onOpenChange, disabled = false }: MenuRootProps) {
+  const parent = useMenu("DropdownMenuSub")
+  const menu = useMenuState({ open, defaultOpen, onOpenChange, disabled })
+  return (
+    <SubmenuParentContext.Provider value={parent}>
+      <MenuContext.Provider value={menu}>{children}</MenuContext.Provider>
+    </SubmenuParentContext.Provider>
+  )
+}
+
+export interface DropdownMenuSubTriggerProps extends Omit<HostProps, "style"> {
+  value: string
+  label?: string
+  disabled?: boolean
+  style?: StateStyle<MenuItemState>
+}
+
+export const DropdownMenuSubTrigger = React.forwardRef<BlendxElement, DropdownMenuSubTriggerProps>(
+  function DropdownMenuSubTrigger({ value, label = value, disabled = false, style, onMouseEnter, onClick, onKeyDown, ...props }, ref) {
+    const menu = useMenu("DropdownMenuSubTrigger")
+    const parent = React.useContext(SubmenuParentContext)
+    if (!parent) throw new Error("DropdownMenuSubTrigger must be used inside DropdownMenuSub")
+    const action = React.useRef(() => {})
+    action.current = () => { if (!disabled) menu.setOpen(true) }
+    React.useLayoutEffect(() => parent.register({ value, label, disabled, action, submenu: true }), [parent.register, value, label, disabled])
+    return (
+      <button
+        {...props}
+        ref={(element) => { menu.setTrigger(element); setRefs(element, ref) }}
+        accessibilityRole="menuitem"
+        disabled={disabled}
+        tabIndex={-1}
+        style={resolveStyle(style, { highlighted: parent.active === value, disabled })}
+        onMouseEnter={(event) => {
+          onMouseEnter?.(event)
+          if (!disabled) { parent.setActive(value); menu.setOpen(true) }
+        }}
+        onClick={(event) => { onClick?.(event); action.current() }}
+        onKeyDown={(event) => {
+          onKeyDown?.(event)
+          const key = normalizeKey(event.key)
+          if (key === "right" || key === "enter" || key === "space") menu.setOpen(true)
+        }}
+      />
+    )
+  },
+)
+
+export const DropdownMenuSubContent = React.forwardRef<BlendxElement, DropdownMenuContentProps>(
+  function DropdownMenuSubContent({ onKeyDown, ...props }, ref) {
+    const menu = useMenu("DropdownMenuSubContent")
+    if (!menu.open || menu.anchorId === undefined) return null
+    return (
+      <MenuContent
+        {...props}
+        ref={ref}
+        anchorId={menu.anchorId}
+        side="right"
+        align="start"
+        onKeyDown={(event) => {
+          onKeyDown?.(event)
+          if (normalizeKey(event.key) === "left") menu.setOpen(false)
+        }}
+      />
+    )
+  },
+)
 
 export const DropdownMenuLabel = React.forwardRef<BlendxElement, HostProps>((props, ref) => <div {...props} ref={ref} />)
 export const ContextMenuLabel = DropdownMenuLabel

@@ -6,7 +6,7 @@
  */
 
 import React from "react"
-import { render } from "../src/index.js"
+import { render, VirtualList } from "../src/index.js"
 import type { CanvasCommand, Color } from "../src/types.js"
 
 const { memo, useEffect, useMemo, useState } = React
@@ -279,9 +279,14 @@ function Dashboard() {
               <text style={{ width: 76, color: C.faint, fontSize: 8 }}>CPU</text>
               <text style={{ color: C.faint, fontSize: 8 }}>MEMORY</text>
             </div>
-            <virtual-list itemHeight={34} overdraw={3} estimatedItemHeight={34} style={{ width: "100%", flexGrow: 1, minHeight: 0, overflow: "scroll" }}>
-              {PROCESSES.map((process) => <ProcessRow key={process.id} process={process} tick={tick} />)}
-            </virtual-list>
+            <VirtualList
+              items={PROCESSES}
+              estimatedItemHeight={34}
+              getItemKey={(process) => process.id}
+              overdraw={3}
+              style={{ width: "100%", flexGrow: 1, minHeight: 0 }}
+              renderItem={(process) => <ProcessRow process={process} tick={tick} />}
+            />
           </div>
         </div>
       </div>

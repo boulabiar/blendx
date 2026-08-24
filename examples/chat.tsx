@@ -1,5 +1,5 @@
 import React from "react"
-import { render } from "../src/index.js"
+import { render, VirtualList } from "../src/index.js"
 import type { CanvasCommand } from "../src/types.js"
 
 const { memo, useEffect, useMemo, useState } = React
@@ -69,7 +69,10 @@ function Sidebar({ active, onSelect }: { active: number; onSelect: (id: number) 
   return (
     <div style={{ width: 248, height: "100%", flexShrink: 0, padding: 12, gap: 9, backgroundColor: C.sidebar }}>
       <div style={{ height: 42, flexDirection: "row", alignItems: "center", gap: 10 }}>
-        <img src="/usr/share/pixmaps/debian-logo.png" alt="BlendX" objectFit="contain" style={{ width: 28, height: 28, borderRadius: 7 }} />
+        <svg
+          src={'<svg viewBox="0 0 28 28"><rect width="28" height="28" rx="7" fill="#e2795b"/><path d="M7 18 14 7l7 11h-4l-3-5-3 5Z" fill="#fff"/></svg>'}
+          style={{ width: 28, height: 28 }}
+        />
         <text style={{ flexGrow: 1, fontSize: 17, color: C.text }}>BlendX Chat</text>
         <button style={{ width: 28, height: 28, alignItems: "center", justifyContent: "center", backgroundColor: C.raised, borderRadius: 6 }} onClick={() => onSelect(0)}>
           <text style={{ color: C.text, fontSize: 18 }}>+</text>
@@ -150,9 +153,14 @@ function ChatApp({ count }: { count: number }) {
           </button>
         </div>
         <separator style={{ width: "100%", color: C.border }} />
-        <virtual-list itemHeight={112} overdraw={4} estimatedItemHeight={112} style={{ width: "100%", height: 612, overflow: "scroll", backgroundColor: C.canvas }}>
-          {messages.map((message) => <MessageRow key={message.id} message={message} />)}
-        </virtual-list>
+        <VirtualList
+          items={messages}
+          estimatedItemHeight={112}
+          getItemKey={(message) => message.id}
+          overdraw={4}
+          style={{ width: "100%", height: 612, backgroundColor: C.canvas }}
+          renderItem={(message) => <MessageRow message={message} />}
+        />
         <div style={{ width: "100%", height: 128, paddingHorizontal: 22, paddingVertical: 14, backgroundColor: "#191c22" }}>
           <div style={{ width: "100%", height: 96, padding: 10, gap: 8, backgroundColor: C.composer, borderRadius: 12, borderWidth: 1, borderColor: C.border }}>
             <textarea value={composer} placeholder="Ask BlendX anything… (Ctrl+Enter to send)" minRows={2} maxRows={3} autoFocus style={{ width: "100%", height: 46, paddingHorizontal: 8, fontSize: 14, lineHeight: 20, color: C.text, backgroundColor: C.composer }} onChange={(event) => setComposer(event.value ?? "")} onSubmit={(event) => send(event.value ?? composer)} />

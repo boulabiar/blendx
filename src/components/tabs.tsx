@@ -72,6 +72,8 @@ export const TabsTrigger = React.forwardRef<BlendxElement, TabsTriggerProps>(
       <button
         {...props}
         ref={(next) => { element.current = next; setRefs(next, forwardedRef) }}
+        accessibilityRole="tab"
+        accessibilitySelected={state.selected}
         disabled={disabled}
         tabIndex={props.tabIndex ?? (state.selected ? 0 : -1)}
         style={resolveStyle(style, state)}

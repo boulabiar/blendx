@@ -2,6 +2,8 @@
 #include "hermes/VM/Runtime.h"
 #include "napi/hermes_napi.h"
 
+#include <SDL.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -106,6 +108,7 @@ class Host {
   ~Host() {
     for (auto& [_, timer] : timers_) napi_delete_reference(env_, timer.callback);
     if (signal_callback_) napi_delete_reference(env_, signal_callback_);
+    if (native_renderer_) napi_delete_reference(env_, native_renderer_);
   }
 
   bool install(napi_value native_renderer) {
@@ -113,6 +116,11 @@ class Host {
     if (!check(env_, napi_get_global(env_, &global), "get global object")) return false;
     if (!check(env_, napi_set_named_property(env_, global, "__blendxNative", native_renderer),
                "install native renderer")) return false;
+    if (!check(env_, napi_create_reference(env_, native_renderer, 1, &native_renderer_),
+               "retain native renderer")) return false;
+    napi_value native_event_loop;
+    napi_get_boolean(env_, true, &native_event_loop);
+    napi_set_named_property(env_, global, "__blendxNativeEventLoop", native_event_loop);
 
     if (!install_function(global, "setTimeout", set_timeout, this) ||
         !install_function(global, "setInterval", set_interval, this) ||
@@ -149,7 +157,8 @@ class Host {
   }
 
   int run() {
-    while (!timers_.empty()) {
+    bool renderer_running = true;
+    while (renderer_running || !timers_.empty()) {
       if (interrupted.exchange(false, std::memory_order_relaxed)) invoke_signal();
       if (!run_due_timers()) return 1;
       if (runtime_.drainJobs() == hermes::vm::ExecutionStatus::EXCEPTION) {
@@ -157,14 +166,23 @@ class Host {
         return 1;
       }
       if (print_exception(env_)) return 1;
-      if (timers_.empty()) break;
+      renderer_running = poll_renderer();
+      if (print_exception(env_)) return 1;
+      if (!renderer_running && timers_.empty()) break;
       auto next = Clock::time_point::max();
       for (const auto& [_, timer] : timers_) next = std::min(next, timer.due);
       const auto now = Clock::now();
-      if (next > now) {
-        const auto maximum_sleep =
-            std::chrono::duration_cast<Clock::duration>(std::chrono::milliseconds(8));
-        std::this_thread::sleep_for(std::min(next - now, maximum_sleep));
+      if (next > now || next == Clock::time_point::max()) {
+        const auto remaining = next == Clock::time_point::max()
+                                   ? std::chrono::milliseconds(1000)
+                                   : std::chrono::duration_cast<std::chrono::milliseconds>(next - now);
+        const int timeout = static_cast<int>(std::clamp<int64_t>(remaining.count(), 1, 1000));
+        if (renderer_running && SDL_WasInit(SDL_INIT_EVENTS) != 0) {
+          SDL_Event event;
+          if (SDL_WaitEventTimeout(&event, timeout) == 1) SDL_PushEvent(&event);
+        } else {
+          std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
+        }
       }
     }
     return 0;
@@ -346,6 +364,23 @@ class Host {
     return true;
   }
 
+  bool poll_renderer() {
+    if (!native_renderer_) return false;
+    napi_handle_scope scope;
+    napi_open_handle_scope(env_, &scope);
+    napi_value renderer;
+    napi_value poll;
+    napi_value result;
+    bool running = false;
+    if (napi_get_reference_value(env_, native_renderer_, &renderer) == napi_ok &&
+        napi_get_named_property(env_, renderer, "poll", &poll) == napi_ok &&
+        napi_call_function(env_, renderer, poll, 0, nullptr, &result) == napi_ok) {
+      napi_get_value_bool(env_, result, &running);
+    }
+    napi_close_handle_scope(env_, scope);
+    return running;
+  }
+
   napi_env env_;
   hermes::vm::Runtime& runtime_;
   Clock::time_point started_;
@@ -355,6 +390,7 @@ class Host {
   uint64_t next_timer_id_ = 1;
   std::unordered_map<uint64_t, Timer> timers_;
   napi_ref signal_callback_ = nullptr;
+  napi_ref native_renderer_ = nullptr;
 };
 
 }  // namespace

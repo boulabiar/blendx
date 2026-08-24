@@ -51,5 +51,11 @@ jobs:
       - name: Run floating controls under Hermes
         run: node tools/hermes-app.mjs run examples/components.tsx -- --headless
 
+      - name: Run selection and navigation controls under Hermes
+        run: |
+          node tools/hermes-app.mjs run examples/controls.tsx -- --headless
+          node tools/hermes-app.mjs run examples/disclosure.tsx -- --headless
+          node tools/hermes-app.mjs run examples/menus.tsx -- --headless
+
       - name: Verify the packed executable
         run: node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat && ./build/blendx-chat --headless

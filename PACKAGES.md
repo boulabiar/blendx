@@ -1,7 +1,8 @@
 # Packages and native dependencies
 
-BlendX uses a small JavaScript dependency set. Most rendering behavior is
-implemented directly in `native/addon.cpp` and statically linked Blend2D.
+BlendX uses a small JavaScript dependency set. Rendering behavior is split
+across the native model, layout, paint, input/event core, and N-API protocol
+sources and uses statically linked Blend2D.
 
 ## Application runtime
 
@@ -35,6 +36,7 @@ contain Node.js or Bun and does not need `node_modules` at runtime.
 | Blend2D | pinned commit `6dbc2cefbc996379e07104e34519a440b49b15d7` | Static, compiled into the Hermes host and test addon | SIMD/JIT rasterization, text shaping, paths, images, and the PRGB32 framebuffer |
 | AsmJit | pinned commit `f64c90818ff2ef87ec4f73f44d0a7e73fbff3229` | Static through Blend2D | Runtime generation of architecture-specific Blend2D pipelines |
 | SDL2 | system-provided development package | Dynamic | Window creation, events, keyboard/text input, and framebuffer presentation |
+| Roboto | pinned Google Fonts revision, OFL 1.1 | Bytes embedded into the executable | Portable default UI font without a machine-specific path |
 | N-API | Hermes implementation and headers | Static runtime ABI | Stable C ABI between Hermes and the native renderer; the same headers build a Node-compatible test addon |
 
 Blend2D is built in-tree as `libblend2d.a`, eliminating a separate Blend2D
@@ -49,9 +51,11 @@ runtime file and the development-machine RPATH.
 | `pkg-config` | system package, when SDL2 has no CMake config | Locates SDL2 and its compiler/linker flags |
 | Node.js/npm | 18.20.8 / 10.8.2 observed | Installs packages and runs TypeScript/bundling/test tools |
 
-Hermes, Blend2D, and AsmJit archives are pinned by commit and SHA-256 in
-`CMakeLists.txt`. `HERMES_ROOT`, `BLEND2D_ROOT`, and `ASMJIT_ROOT` are optional
-local-development overrides; normal builds and CI do not depend on them.
+Hermes, Blend2D, AsmJit, and the Roboto asset are pinned by revision and SHA-256
+in `CMakeLists.txt`. `HERMES_ROOT`, `BLEND2D_ROOT`, `ASMJIT_ROOT`, and
+`BLENDX_FONT_FILE` are optional local-development overrides; normal builds and
+CI do not depend on them. Roboto's complete OFL text is kept in
+`LICENSES/Roboto-OFL.txt`.
 
 ## Operating-system dependencies
 
@@ -61,21 +65,11 @@ glibc, libstdc++, SDL2, and the X11/Wayland/input/audio libraries selected by
 the distribution's SDL build. This is comparable to a native application using
 system GUI libraries; those libraries are not JavaScript package dependencies.
 
-The default font currently comes from:
-
-```text
-/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
-```
-
-The chat's demonstration image currently comes from:
-
-```text
-/usr/share/pixmaps/debian-logo.png
-```
-
-For a completely asset-independent executable, the next step is to accept
-font/image bytes in the native protocol and feed embedded assets directly
-to Blend2D.
+The default font is compiled into the host and the chat uses inline SVG, so the
+examples no longer require `/usr/share/fonts` or `/usr/share/pixmaps`. An explicit
+`fontPath` renderer option can still override the embedded default. User image
+files referenced by an application remain external unless the application
+bundles their bytes or inline SVG itself.
 
 ## Deliberately not external packages
 

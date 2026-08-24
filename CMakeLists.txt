@@ -10,6 +10,36 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
+set(BLENDX_FONT_FILE "" CACHE FILEPATH "Use a local default font instead of the pinned embedded Roboto font")
+if(NOT BLENDX_FONT_FILE)
+  set(BLENDX_FONT_FILE "${CMAKE_BINARY_DIR}/assets/Roboto.ttf")
+  if(NOT EXISTS "${BLENDX_FONT_FILE}")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/assets")
+    file(DOWNLOAD
+      "https://raw.githubusercontent.com/google/fonts/ec626514f79f831f1ab848a82114a0ce7e2d6372/ofl/roboto/Roboto%5Bwdth%2Cwght%5D.ttf"
+      "${BLENDX_FONT_FILE}"
+      EXPECTED_HASH SHA256=d7598e12c5dbef095ff8272cfc55da0250bd07fbdecbac8a530b9b277872a134
+      TLS_VERIFY ON
+      STATUS BLENDX_FONT_DOWNLOAD_STATUS)
+    list(GET BLENDX_FONT_DOWNLOAD_STATUS 0 BLENDX_FONT_DOWNLOAD_CODE)
+    if(NOT BLENDX_FONT_DOWNLOAD_CODE EQUAL 0)
+      list(GET BLENDX_FONT_DOWNLOAD_STATUS 1 BLENDX_FONT_DOWNLOAD_MESSAGE)
+      message(FATAL_ERROR "Could not download pinned Roboto font: ${BLENDX_FONT_DOWNLOAD_MESSAGE}")
+    endif()
+  endif()
+endif()
+
+set(BLENDX_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${BLENDX_GENERATED_DIR}")
+set(BLENDX_EMBEDDED_FONT_HEADER "${BLENDX_GENERATED_DIR}/blendx_embedded_font.h")
+add_custom_command(
+  OUTPUT "${BLENDX_EMBEDDED_FONT_HEADER}"
+  COMMAND "${CMAKE_COMMAND}" -DINPUT=${BLENDX_FONT_FILE} -DOUTPUT=${BLENDX_EMBEDDED_FONT_HEADER}
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake"
+  DEPENDS "${BLENDX_FONT_FILE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake"
+  VERBATIM)
+add_custom_target(blendx_embedded_assets DEPENDS "${BLENDX_EMBEDDED_FONT_HEADER}")
+
 function(blendx_enable_warnings target)
   if(MSVC)
     target_compile_options(${target} PRIVATE /W4)
@@ -84,9 +114,16 @@ endif()
 
 add_executable(blendx_hermes
   native/hermes_host.cpp
-  native/addon.cpp)
+  native/addon.cpp
+  native/renderer_model.h
+  native/renderer_layout.inc
+  native/renderer_paint.inc
+  native/napi_protocol.inc
+  "${BLENDX_EMBEDDED_FONT_HEADER}")
+add_dependencies(blendx_hermes blendx_embedded_assets)
 target_compile_definitions(blendx_hermes PRIVATE BLENDX_USE_HERMES_NAPI=1)
 target_include_directories(blendx_hermes PRIVATE
+  "${BLENDX_GENERATED_DIR}"
   "${BLENDX_HERMES_SOURCE_DIR}/API"
   "${BLENDX_HERMES_SOURCE_DIR}/include"
   "${BLENDX_HERMES_SOURCE_DIR}/public")
@@ -101,8 +138,12 @@ set_target_properties(blendx_hermes PROPERTIES
 
 option(BLENDX_BUILD_NODE_ADDON "Build the Node-compatible addon used by tests" OFF)
 if(BLENDX_BUILD_NODE_ADDON)
-  add_library(blendx_native SHARED native/addon.cpp)
+  add_library(blendx_native SHARED native/addon.cpp native/renderer_model.h native/renderer_layout.inc
+    native/renderer_paint.inc native/napi_protocol.inc
+    "${BLENDX_EMBEDDED_FONT_HEADER}")
+  add_dependencies(blendx_native blendx_embedded_assets)
   target_include_directories(blendx_native PRIVATE
+    "${BLENDX_GENERATED_DIR}"
     "${BLENDX_HERMES_SOURCE_DIR}/API"
     "${BLENDX_HERMES_SOURCE_DIR}/include")
   target_link_libraries(blendx_native PRIVATE blend2d::blend2d ${BLENDX_SDL_TARGET})

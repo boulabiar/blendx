@@ -83,6 +83,8 @@ export const Slider = React.forwardRef<BlendxElement, SliderProps>(
       <button
         {...props}
         ref={setElement}
+        accessibilityRole="slider"
+        accessibilityValue={Array.isArray(value) ? `${values[0]}–${values[1]}` : String(values[1])}
         disabled={disabled}
         tabIndex={props.tabIndex ?? 0}
         style={{ width: 240, height: 24, flexDirection: "row", alignItems: "center", position: "relative", ...(resolveStyle(style, state) ?? {}) }}

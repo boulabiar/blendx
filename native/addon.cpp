@@ -3,6 +3,9 @@
 #include <SDL.h>
 #include <blend2d/blend2d.h>
 
+#include "blendx_embedded_font.h"
+#include "renderer_model.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -22,113 +25,7 @@
 
 namespace {
 
-struct Dimension {
-  bool set = false;
-  bool percent = false;
-  double value = 0.0;
-
-  double resolve(double available, double fallback) const {
-    if (!set) return fallback;
-    return percent ? available * value * 0.01 : value;
-  }
-};
-
-struct Style {
-  Dimension width;
-  Dimension height;
-  double min_width = 0.0;
-  double min_height = 0.0;
-  bool row = false;
-  double flex_grow = 0.0;
-  double flex_shrink = 1.0;
-  double gap = 0.0;
-  double padding_left = 0.0;
-  double padding_right = 0.0;
-  double padding_top = 0.0;
-  double padding_bottom = 0.0;
-  double margin_left = 0.0;
-  double margin_right = 0.0;
-  double margin_top = 0.0;
-  double margin_bottom = 0.0;
-  std::optional<uint32_t> background;
-  std::optional<uint32_t> color;
-  std::optional<uint32_t> border_color;
-  double font_size = 16.0;
-  double line_height = 0.0;
-  double border_radius = 0.0;
-  double border_width = 0.0;
-  double opacity = 1.0;
-  bool visible = true;
-  enum class Overflow { kVisible, kHidden, kScroll } overflow = Overflow::kVisible;
-  enum class Position { kRelative, kAbsolute, kFixed } position = Position::kRelative;
-  enum class Align { kStart, kCenter, kEnd, kStretch } align_items = Align::kStretch;
-  enum class Justify { kStart, kCenter, kEnd, kSpaceBetween } justify = Justify::kStart;
-  std::optional<double> left;
-  std::optional<double> right;
-  std::optional<double> top;
-  std::optional<double> bottom;
-  double z_index = 0.0;
-  Dimension max_width;
-  Dimension max_height;
-
-  bool same_layout(const Style& other) const {
-    auto same_dimension = [](const Dimension& a, const Dimension& b) {
-      return a.set == b.set && a.percent == b.percent && a.value == b.value;
-    };
-    return same_dimension(width, other.width) && same_dimension(height, other.height) &&
-           min_width == other.min_width && min_height == other.min_height && row == other.row &&
-           flex_grow == other.flex_grow && flex_shrink == other.flex_shrink && gap == other.gap &&
-           padding_left == other.padding_left && padding_right == other.padding_right &&
-           padding_top == other.padding_top && padding_bottom == other.padding_bottom &&
-           margin_left == other.margin_left &&
-           margin_right == other.margin_right && margin_top == other.margin_top &&
-           margin_bottom == other.margin_bottom && font_size == other.font_size &&
-           line_height == other.line_height && position == other.position &&
-           left == other.left && right == other.right && top == other.top &&
-           bottom == other.bottom && align_items == other.align_items &&
-           justify == other.justify && same_dimension(max_width, other.max_width) &&
-           same_dimension(max_height, other.max_height);
-  }
-
-
-  bool same_visual(const Style& other) const {
-    return background == other.background && color == other.color &&
-           border_color == other.border_color && border_radius == other.border_radius &&
-           border_width == other.border_width && opacity == other.opacity &&
-           visible == other.visible && overflow == other.overflow &&
-           z_index == other.z_index;
-  }
-};
-
-struct Box {
-  double x = 0.0;
-  double y = 0.0;
-  double w = 0.0;
-  double h = 0.0;
-
-  bool contains(double px, double py) const {
-    return px >= x && py >= y && px < x + w && py < y + h;
-  }
-};
-
-struct ElementHandler {
-  enum class Kind {
-    kContainer,
-    kText,
-    kVirtualList,
-    kImage,
-    kSvg,
-    kCanvas,
-    kSeparator,
-    kProgress,
-    kAnchored,
-    kMarkdown,
-    kCode,
-    kDiff,
-    kInput,
-  } kind;
-  const char* name;
-};
+using namespace blendx;
 
 class ElementRegistry {
  public:
@@ -165,73 +62,6 @@ class ElementRegistry {
   std::unordered_map<std::string, ElementHandler> handlers_;
 };
 
-struct CanvasCommand {
-  std::string kind;
-  double x = 0.0;
-  double y = 0.0;
-  double x2 = 0.0;
-  double y2 = 0.0;
-  double width = 0.0;
-  double height = 0.0;
-  double radius = 0.0;
-  double stroke_width = 1.0;
-  double font_size = 14.0;
-  uint32_t color = 0xFFFFFFFFu;
-  bool fill = true;
-  std::string text;
-};
-
-using PropValue = std::variant<std::monostate, double, bool, std::string,
-                               std::vector<CanvasCommand>, BLPoint>;
-
-struct Node {
-  uint64_t id = 0;
-  std::string type;
-  const ElementHandler* handler = nullptr;
-  std::string text;
-  Style style;
-  Box box;
-  uint64_t parent = 0;
-  std::vector<uint64_t> children;
-  std::unordered_set<std::string> events;
-  std::unordered_map<std::string, PropValue> props;
-  double scroll_y = 0.0;
-  double scroll_target_y = 0.0;
-  double content_height = 0.0;
-  double item_height = 28.0;
-  uint32_t overdraw = 2;
-  size_t visible_start = 0;
-  size_t visible_end = 0;
-  size_t last_child_count = 0;
-};
-
-struct Size {
-  double w = 0.0;
-  double h = 0.0;
-};
-
-template<typename T>
-const T* prop_as(const Node& node, const char* name) {
-  auto it = node.props.find(name);
-  return it == node.props.end() ? nullptr : std::get_if<T>(&it->second);
-}
-
-double number_prop(const Node& node, const char* name, double fallback = 0.0) {
-  if (const double* value = prop_as<double>(node, name)) return *value;
-  return fallback;
-}
-
-bool bool_prop(const Node& node, const char* name, bool fallback = false) {
-  if (const bool* value = prop_as<bool>(node, name)) return *value;
-  return fallback;
-}
-
-std::string string_prop(const Node& node, const char* name,
-                        const std::string& fallback = {}) {
-  if (const std::string* value = prop_as<std::string>(node, name)) return *value;
-  return fallback;
-}
-
 class Renderer {
  public:
   ~Renderer() { shutdown(); }
@@ -245,8 +75,18 @@ class Renderer {
     headless_ = headless;
     running_ = true;
 
-    if (font_face_.create_from_file(font_path.c_str()) != BL_SUCCESS) {
-      error = "Could not load font: " + font_path;
+    BLResult font_result = BL_ERROR_INVALID_DATA;
+    if (!font_path.empty()) {
+      font_result = font_face_.create_from_file(font_path.c_str());
+    } else {
+      BLFontData font_data;
+      if (font_data.create_from_data(kBlendxEmbeddedFont, kBlendxEmbeddedFontSize) == BL_SUCCESS) {
+        font_result = font_face_.create_from_data(font_data, 0);
+      }
+    }
+    if (font_result != BL_SUCCESS) {
+      error = font_path.empty() ? "Could not load the embedded default font"
+                                : "Could not load font: " + font_path;
       return false;
     }
 
@@ -295,6 +135,10 @@ class Renderer {
     hovered_id_ = 0;
     pointer_capture_id_ = 0;
     pressed_click_id_ = 0;
+    scrollbar_drag_id_ = 0;
+    modal_root_id_ = 0;
+    selected_text_id_ = 0;
+    selecting_text_ = false;
     dirty_regions_.clear();
     dirty_nodes_.clear();
     scrolling_nodes_.clear();
@@ -343,6 +187,9 @@ class Renderer {
     if (hovered_id_ == id) hovered_id_ = 0;
     if (pointer_capture_id_ == id) pointer_capture_id_ = 0;
     if (pressed_click_id_ == id) pressed_click_id_ = 0;
+    if (scrollbar_drag_id_ == id) scrollbar_drag_id_ = 0;
+    if (modal_root_id_ == id) modal_root_id_ = 0;
+    if (selected_text_id_ == id) selected_text_id_ = 0;
     if (root_id_ == id) root_id_ = 0;
     dirty_ = true;
   }
@@ -421,9 +268,22 @@ class Renderer {
       } else {
         target->overdraw = 2u;
       }
+    } else if (name == "value") {
+      if (const std::string* text = std::get_if<std::string>(&value)) {
+        const std::string previous = string_prop(*target, "value");
+        if (previous.empty() && target->selection_start == 0 && target->selection_end == 0) {
+          target->selection_start = target->selection_end = text->size();
+        } else {
+          target->selection_start = std::min(target->selection_start, text->size());
+          target->selection_end = std::min(target->selection_end, text->size());
+        }
+      }
     } else if (name == "autoFocus" && std::get_if<bool>(&value) && std::get<bool>(value)) {
       focused_id_ = id;
       if (!headless_) SDL_StartTextInput();
+    } else if (name == "modal") {
+      if (const bool* enabled = std::get_if<bool>(&value); enabled && *enabled) modal_root_id_ = id;
+      else if (modal_root_id_ == id) modal_root_id_ = 0;
     }
     if (std::holds_alternative<std::monostate>(value)) {
       target->props.erase(name);
@@ -462,6 +322,17 @@ class Renderer {
   void dispatch_pointer(napi_env env, napi_ref callback_ref, const std::string& kind,
                         double x, double y, int button) {
     if (kind == "mouseMove") {
+      if (scrollbar_drag_id_) {
+        drag_scrollbar(env, callback_ref, y);
+        return;
+      }
+      if (selecting_text_) {
+        if (Node* target = node(selected_text_id_)) {
+          text_selection_focus_ = text_offset_at(*target, x, y);
+          invalidate_paint(selected_text_id_);
+        }
+        return;
+      }
       update_hover(env, callback_ref, x, y);
       emit_pointer(env, callback_ref, "mouseMove", x, y, button, 0.0, pointer_capture_id_);
       return;
@@ -471,12 +342,36 @@ class Renderer {
       return;
     }
     if (kind == "mouseDown") {
+      if (button == 1 && begin_scrollbar_drag(x, y)) return;
+      if (button == 1) {
+        const uint64_t selectable = hit_test_selectable_text(root_id_, x, y);
+        if (Node* target = node(selectable)) {
+          selected_text_id_ = selectable;
+          text_selection_anchor_ = text_selection_focus_ = text_offset_at(*target, x, y);
+          selecting_text_ = true;
+          invalidate_paint(selectable);
+          return;
+        }
+      }
       pressed_click_id_ = hit_test(root_id_, x, y, "click");
       pointer_capture_id_ = hit_test(root_id_, x, y, "mouseDown");
       emit_pointer(env, callback_ref, kind, x, y, button, 0.0, pointer_capture_id_);
       emit_outside(env, callback_ref, x, y);
-      focus_element(env, callback_ref, hit_test_focusable(root_id_, x, y));
+      const uint64_t focus_id = hit_test_focusable(root_id_, x, y);
+      focus_element(env, callback_ref, focus_id);
+      position_input_caret(focus_id, x, y);
     } else if (kind == "mouseUp") {
+      if (selecting_text_) {
+        if (Node* target = node(selected_text_id_)) text_selection_focus_ = text_offset_at(*target, x, y);
+        selecting_text_ = false;
+        invalidate_paint(selected_text_id_);
+        return;
+      }
+      if (scrollbar_drag_id_) {
+        drag_scrollbar(env, callback_ref, y);
+        scrollbar_drag_id_ = 0;
+        return;
+      }
       emit_pointer(env, callback_ref, kind, x, y, button, 0.0, pointer_capture_id_);
       const uint64_t released_click_id = hit_test(root_id_, x, y, "click");
       if (pressed_click_id_ && released_click_id == pressed_click_id_) {
@@ -508,9 +403,31 @@ class Renderer {
     target->scroll_target_y = std::clamp(index * target->item_height, 0.0, max_scroll);
     scrolling_nodes_.insert(id);
   }
+  void scroll_to_offset(uint64_t id, double offset) {
+    Node* target = node(id);
+    if (!target) return;
+    const double max_scroll = std::max(0.0, target->content_height - target->box.h);
+    target->scroll_y = std::clamp(offset, 0.0, max_scroll);
+    target->scroll_target_y = target->scroll_y;
+    scrolling_nodes_.erase(id);
+    invalidate_layout(id);
+  }
   Box element_box(uint64_t id) const {
     auto it = nodes_.find(id);
     return it == nodes_.end() ? Box{} : it->second.box;
+  }
+  std::string selected_text() const {
+    auto found = nodes_.find(selected_text_id_);
+    if (found == nodes_.end()) return {};
+    const size_t start = std::min(text_selection_anchor_, text_selection_focus_);
+    const size_t end = std::min(found->second.text.size(),
+                                std::max(text_selection_anchor_, text_selection_focus_));
+    return end > start ? found->second.text.substr(start, end - start) : std::string{};
+  }
+  std::vector<AccessibilityNode> accessibility_nodes() const {
+    std::vector<AccessibilityNode> result;
+    collect_accessibility(root_id_, result);
+    return result;
   }
   BLResult capture_screenshot(const std::string& path) const {
     return framebuffer_.write_to_file(path.c_str());
@@ -565,6 +482,21 @@ class Renderer {
                    event.type == SDL_MOUSEBUTTONUP) {
           const char* kind = event.type == SDL_MOUSEBUTTONDOWN ? "mouseDown" : "mouseUp";
           if (event.type == SDL_MOUSEBUTTONDOWN) {
+            if (event.button.button == SDL_BUTTON_LEFT &&
+                begin_scrollbar_drag(event.button.x, event.button.y)) {
+              continue;
+            }
+            if (event.button.button == SDL_BUTTON_LEFT) {
+              const uint64_t selectable = hit_test_selectable_text(root_id_, event.button.x, event.button.y);
+              if (Node* target = node(selectable)) {
+                selected_text_id_ = selectable;
+                text_selection_anchor_ = text_selection_focus_ =
+                    text_offset_at(*target, event.button.x, event.button.y);
+                selecting_text_ = true;
+                invalidate_paint(selectable);
+                continue;
+              }
+            }
             pressed_click_id_ = hit_test(root_id_, event.button.x, event.button.y, "click");
             pointer_capture_id_ = hit_test(root_id_, event.button.x, event.button.y, kind);
             emit_pointer(env, event_callback, kind, event.button.x, event.button.y,
@@ -572,7 +504,21 @@ class Renderer {
             emit_outside(env, event_callback, event.button.x, event.button.y);
             const uint64_t focus_id = hit_test_focusable(root_id_, event.button.x, event.button.y);
             focus_element(env, event_callback, focus_id);
+            position_input_caret(focus_id, event.button.x, event.button.y);
           } else {
+            if (selecting_text_) {
+              if (Node* target = node(selected_text_id_)) {
+                text_selection_focus_ = text_offset_at(*target, event.button.x, event.button.y);
+              }
+              selecting_text_ = false;
+              invalidate_paint(selected_text_id_);
+              continue;
+            }
+            if (scrollbar_drag_id_) {
+              drag_scrollbar(env, event_callback, event.button.y);
+              scrollbar_drag_id_ = 0;
+              continue;
+            }
             emit_pointer(env, event_callback, kind, event.button.x, event.button.y,
                          event.button.button, 0.0, pointer_capture_id_);
             const uint64_t released_click_id = hit_test(
@@ -585,6 +531,17 @@ class Renderer {
             pressed_click_id_ = 0;
           }
         } else if (event.type == SDL_MOUSEMOTION) {
+          if (scrollbar_drag_id_) {
+            drag_scrollbar(env, event_callback, event.motion.y);
+            continue;
+          }
+          if (selecting_text_) {
+            if (Node* target = node(selected_text_id_)) {
+              text_selection_focus_ = text_offset_at(*target, event.motion.x, event.motion.y);
+              invalidate_paint(selected_text_id_);
+            }
+            continue;
+          }
           update_hover(env, event_callback, event.motion.x, event.motion.y);
           emit_pointer(env, event_callback, "mouseMove", event.motion.x, event.motion.y, 0,
                        0.0, pointer_capture_id_);
@@ -601,15 +558,27 @@ class Renderer {
                 target->scroll_target_y + delta_y, 0.0,
                 std::max(0.0, target->content_height - target->box.h));
             scrolling_nodes_.insert(target_id);
-            emit_pointer(env, event_callback, "scroll", mouse_x, mouse_y, 0, delta_y);
+            emit_scroll(env, event_callback, target_id, delta_y);
           }
         } else if (event.type == SDL_TEXTINPUT && focused_id_) {
           if (Node* target = node(focused_id_); target && !bool_prop(*target, "readOnly")) {
-            std::string value = string_prop(*target, "value");
-            value += event.text.text;
-            target->props.insert_or_assign("value", value);
+            const std::string value = replace_input_selection(*target, event.text.text);
+            target->composition.clear();
             invalidate_paint(focused_id_);
             emit_to(env, event_callback, focused_id_, "change", value);
+          }
+        } else if (event.type == SDL_TEXTEDITING && focused_id_) {
+          if (Node* target = node(focused_id_); target && target->handler->kind == ElementHandler::Kind::kInput) {
+            target->composition = event.edit.text;
+            invalidate_paint(focused_id_);
+          }
+        } else if (event.type == SDL_KEYDOWN && selected_text_id_ &&
+                   (event.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0 &&
+                   event.key.keysym.sym == SDLK_c) {
+          if (Node* target = node(selected_text_id_)) {
+            const size_t start = std::min(text_selection_anchor_, text_selection_focus_);
+            const size_t end = std::max(text_selection_anchor_, text_selection_focus_);
+            if (end > start) SDL_SetClipboardText(target->text.substr(start, end - start).c_str());
           }
         } else if (event.type == SDL_KEYDOWN && focused_id_) {
           const uint64_t key_target_id = focused_id_;
@@ -623,6 +592,11 @@ class Renderer {
           else if (code == SDLK_SPACE) key = "Space";
           else if (code == SDLK_UP) key = "ArrowUp";
           else if (code == SDLK_DOWN) key = "ArrowDown";
+          else if (code == SDLK_LEFT) key = "ArrowLeft";
+          else if (code == SDLK_RIGHT) key = "ArrowRight";
+          else if (code == SDLK_HOME) key = "Home";
+          else if (code == SDLK_END) key = "End";
+          else if (code == SDLK_DELETE) key = "Delete";
           else if (code == SDLK_TAB) key = "Tab";
           emit_to(env, event_callback, key_target_id, "keyDown", {}, key);
           if (focused_id_ != key_target_id || !(target = node(key_target_id))) continue;
@@ -635,25 +609,101 @@ class Renderer {
               !bool_prop(*target, "disabled")) {
             emit_to(env, event_callback, focused_id_, "click");
           }
-          if (bool_prop(*target, "readOnly")) continue;
+          if (target->handler->kind != ElementHandler::Kind::kInput || bool_prop(*target, "readOnly")) continue;
           std::string value = string_prop(*target, "value");
-          if (code == SDLK_BACKSPACE && !value.empty()) {
-            size_t start = value.size() - 1;
-            while (start > 0 && (static_cast<unsigned char>(value[start]) & 0xC0u) == 0x80u) --start;
-            value.erase(start);
-            target->props.insert_or_assign("value", value);
+          const bool control = (event.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0;
+          const bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
+          auto changed = [&]() {
             invalidate_paint(focused_id_);
-            emit_to(env, event_callback, focused_id_, "change", value, key);
+            emit_to(env, event_callback, focused_id_, "change", string_prop(*target, "value"), key);
+          };
+          auto move_selection = [&](size_t next) {
+            next = std::min(next, value.size());
+            if (shift) target->selection_end = next;
+            else target->selection_start = target->selection_end = next;
+            invalidate_paint(focused_id_);
+          };
+          const size_t selection_begin = std::min(target->selection_start, target->selection_end);
+          const size_t selection_end = std::max(target->selection_start, target->selection_end);
+          if (control && code == SDLK_a) {
+            target->selection_start = 0;
+            target->selection_end = value.size();
+            invalidate_paint(focused_id_);
+          } else if (control && (code == SDLK_c || code == SDLK_x)) {
+            if (selection_end > selection_begin) {
+              SDL_SetClipboardText(value.substr(selection_begin, selection_end - selection_begin).c_str());
+              if (code == SDLK_x) { replace_input_selection(*target, ""); changed(); }
+            }
+          } else if (control && code == SDLK_v) {
+            char* clipboard = SDL_GetClipboardText();
+            replace_input_selection(*target, clipboard ? clipboard : "");
+            if (clipboard) SDL_free(clipboard);
+            changed();
+          } else if (control && code == SDLK_z && !shift && !target->undo_stack.empty()) {
+            target->redo_stack.push_back(value);
+            value = target->undo_stack.back();
+            target->undo_stack.pop_back();
+            target->props.insert_or_assign("value", value);
+            target->selection_start = target->selection_end = value.size();
+            changed();
+          } else if (control && (code == SDLK_y || (shift && code == SDLK_z)) && !target->redo_stack.empty()) {
+            target->undo_stack.push_back(value);
+            value = target->redo_stack.back();
+            target->redo_stack.pop_back();
+            target->props.insert_or_assign("value", value);
+            target->selection_start = target->selection_end = value.size();
+            changed();
+          } else if (code == SDLK_LEFT) {
+            move_selection(!shift && selection_end > selection_begin
+                               ? selection_begin : previous_utf8(value, target->selection_end));
+          } else if (code == SDLK_RIGHT) {
+            move_selection(!shift && selection_end > selection_begin
+                               ? selection_end : next_utf8(value, target->selection_end));
+          } else if (code == SDLK_UP || code == SDLK_DOWN) {
+            const size_t current = target->selection_end;
+            const size_t marker = current == 0 ? std::string::npos : value.rfind('\n', current - 1);
+            const size_t line_start = marker == std::string::npos ? 0 : marker + 1;
+            const size_t column = current - line_start;
+            if (code == SDLK_UP) {
+              if (line_start == 0) move_selection(0);
+              else {
+                const size_t previous_end = line_start - 1;
+                const size_t previous_marker = previous_end == 0 ? std::string::npos : value.rfind('\n', previous_end - 1);
+                const size_t previous_start = previous_marker == std::string::npos ? 0 : previous_marker + 1;
+                move_selection(previous_start + std::min(column, previous_end - previous_start));
+              }
+            } else {
+              const size_t line_end = value.find('\n', current);
+              if (line_end == std::string::npos) move_selection(value.size());
+              else {
+                const size_t next_start = line_end + 1;
+                const size_t next_marker = value.find('\n', next_start);
+                const size_t next_end = next_marker == std::string::npos ? value.size() : next_marker;
+                move_selection(next_start + std::min(column, next_end - next_start));
+              }
+            }
+          } else if (code == SDLK_HOME) {
+            const size_t newline = value.rfind('\n', target->selection_end == 0 ? 0 : target->selection_end - 1);
+            move_selection(newline == std::string::npos ? 0 : newline + 1);
+          } else if (code == SDLK_END) {
+            const size_t newline = value.find('\n', target->selection_end);
+            move_selection(newline == std::string::npos ? value.size() : newline);
+          } else if (code == SDLK_BACKSPACE && (selection_end > selection_begin || !value.empty())) {
+            if (selection_end == selection_begin) target->selection_start = previous_utf8(value, selection_begin);
+            replace_input_selection(*target, "");
+            changed();
+          } else if (code == SDLK_DELETE && (selection_end > selection_begin || selection_begin < value.size())) {
+            if (selection_end == selection_begin) target->selection_end = next_utf8(value, selection_end);
+            replace_input_selection(*target, "");
+            changed();
           } else if (code == SDLK_RETURN) {
             const bool multiline = target->type == "textarea";
             const bool submit = !multiline || (event.key.keysym.mod & KMOD_CTRL) != 0;
             if (submit) {
               emit_to(env, event_callback, focused_id_, "submit", value, key);
             } else {
-              value.push_back('\n');
-              target->props.insert_or_assign("value", value);
-              invalidate_paint(focused_id_);
-              emit_to(env, event_callback, focused_id_, "change", value, key);
+              replace_input_selection(*target, "\n");
+              changed();
             }
           }
         } else if (event.type == SDL_KEYUP && focused_id_) {
@@ -685,6 +735,7 @@ class Renderer {
       }
       add_dirty_box(target->box);
       target->scroll_y += remaining * scroll_blend;
+      emit_scroll(env, event_callback, id, 0.0);
       dirty_nodes_.insert(id);
       dirty_ = true;
       ++active;
@@ -825,6 +876,122 @@ class Renderer {
     font.get_text_metrics(glyphs, metrics);
     const auto& fm = font.metrics();
     return {std::ceil(metrics.advance.x), std::ceil(fm.ascent + fm.descent + fm.line_gap)};
+  }
+
+  static size_t previous_utf8(const std::string& value, size_t at) {
+    if (at == 0) return 0;
+    --at;
+    while (at > 0 && (static_cast<unsigned char>(value[at]) & 0xC0u) == 0x80u) --at;
+    return at;
+  }
+
+  static size_t next_utf8(const std::string& value, size_t at) {
+    if (at >= value.size()) return value.size();
+    ++at;
+    while (at < value.size() && (static_cast<unsigned char>(value[at]) & 0xC0u) == 0x80u) ++at;
+    return at;
+  }
+
+  void remember_input(Node& node, const std::string& value) {
+    if (node.undo_stack.empty() || node.undo_stack.back() != value) {
+      node.undo_stack.push_back(value);
+      if (node.undo_stack.size() > 100) node.undo_stack.erase(node.undo_stack.begin());
+    }
+    node.redo_stack.clear();
+  }
+
+  std::string replace_input_selection(Node& node, const std::string& replacement) {
+    std::string value = string_prop(node, "value");
+    const size_t start = std::min(node.selection_start, node.selection_end);
+    const size_t end = std::max(node.selection_start, node.selection_end);
+    remember_input(node, value);
+    value.replace(start, end - start, replacement);
+    node.selection_start = node.selection_end = start + replacement.size();
+    node.props.insert_or_assign("value", value);
+    return value;
+  }
+
+  void position_input_caret(uint64_t id, double x, double y) {
+    Node* target = node(id);
+    if (!target || target->handler->kind != ElementHandler::Kind::kInput) return;
+    const std::string value = string_prop(*target, "value");
+    const double line_height = target->style.line_height > 0.0
+                                   ? target->style.line_height
+                                   : target->style.font_size * 1.35;
+    const size_t wanted_line = target->type == "textarea"
+                                   ? static_cast<size_t>(std::max(0.0, std::floor((y - target->box.y - target->style.padding_top) / line_height)))
+                                   : 0;
+    size_t line_start = 0;
+    for (size_t line = 0; line < wanted_line; ++line) {
+      const size_t newline = value.find('\n', line_start);
+      if (newline == std::string::npos) { line_start = value.size(); break; }
+      line_start = newline + 1;
+    }
+    const size_t line_end = value.find('\n', line_start) == std::string::npos
+                                ? value.size() : value.find('\n', line_start);
+    const double local_x = std::max(0.0, x - target->box.x - target->style.padding_left);
+    size_t caret = line_start;
+    while (caret < line_end) {
+      const size_t next = next_utf8(value, caret);
+      if (measure_text(value.substr(line_start, next - line_start), target->style.font_size).w > local_x) break;
+      caret = next;
+    }
+    target->selection_start = target->selection_end = caret;
+    invalidate_paint(id);
+  }
+
+  std::vector<std::string> text_lines(const Node& node, double width) const {
+    std::vector<std::string> lines;
+    const bool wrap = node.style.white_space == Style::WhiteSpace::kNormal ||
+                      node.style.white_space == Style::WhiteSpace::kPreWrap;
+    std::istringstream paragraphs(node.text);
+    std::string paragraph;
+    while (std::getline(paragraphs, paragraph)) {
+      if (!wrap) {
+        lines.push_back(paragraph);
+        continue;
+      }
+      std::istringstream words(paragraph);
+      std::string word;
+      std::string line;
+      while (words >> word) {
+        const std::string candidate = line.empty() ? word : line + " " + word;
+        if (!line.empty() && measure_text(candidate, node.style.font_size).w > width) {
+          lines.push_back(line);
+          line = word;
+        } else {
+          line = candidate;
+        }
+      }
+      lines.push_back(line);
+    }
+    if (lines.empty()) lines.emplace_back();
+    return lines;
+  }
+
+  size_t text_offset_at(const Node& node, double x, double y) const {
+    const std::vector<std::string> lines = text_lines(node, std::max(1.0, node.box.w));
+    const double line_height = node.style.line_height > 0.0
+                                   ? node.style.line_height
+                                   : measure_text("Mg", node.style.font_size).h;
+    const size_t line_index = std::min(lines.size() - 1,
+        static_cast<size_t>(std::max(0.0, std::floor((y - node.box.y) / std::max(1.0, line_height)))));
+    size_t search_from = 0;
+    size_t source_start = 0;
+    for (size_t index = 0; index <= line_index; ++index) {
+      const size_t found = node.text.find(lines[index], search_from);
+      source_start = found == std::string::npos ? search_from : found;
+      search_from = source_start + lines[index].size();
+    }
+    const std::string& line = lines[line_index];
+    const double local_x = std::max(0.0, x - node.box.x);
+    size_t offset = 0;
+    while (offset < line.size()) {
+      const size_t next = next_utf8(line, offset);
+      if (measure_text(line.substr(0, next), node.style.font_size).w > local_x) break;
+      offset = next;
+    }
+    return std::min(node.text.size(), source_start + offset);
   }
 
   const BLImage* image_for(const std::string& path) const {
@@ -1007,572 +1174,9 @@ class Renderer {
     context.restore();
   }
 
-  Size natural_size(uint64_t id, double available_width) const {
-    auto it = nodes_.find(id);
-    if (it == nodes_.end()) return {};
-    const Node& n = it->second;
-    if (n.handler->kind == ElementHandler::Kind::kText) {
-      Size measured = measure_text(n.text, n.style.font_size);
-      if (n.style.line_height > 0.0) measured.h = n.style.line_height;
-      measured.w = std::max(measured.w, n.style.min_width);
-      measured.h = std::max(measured.h, n.style.min_height);
-      return measured;
-    }
+#include "renderer_layout.inc"
 
-    if (n.handler->kind == ElementHandler::Kind::kVirtualList) {
-      const double natural_h = n.children.size() * n.item_height +
-                               n.style.padding_top + n.style.padding_bottom;
-      return {
-          std::max(n.style.min_width, n.style.width.resolve(available_width, available_width)),
-          std::max(n.style.min_height, n.style.height.resolve(natural_h, natural_h)),
-      };
-    }
-
-    if (n.handler->kind == ElementHandler::Kind::kImage) {
-      Size result{100.0, 100.0};
-      if (const BLImage* image = image_for(string_prop(n, "src"))) {
-        result = {static_cast<double>(image->width()), static_cast<double>(image->height())};
-      }
-      result.w = n.style.width.resolve(available_width, result.w);
-      result.h = n.style.height.resolve(result.h, result.h);
-      return result;
-    }
-    if (n.handler->kind == ElementHandler::Kind::kSvg) {
-      return {n.style.width.resolve(available_width, 24.0), n.style.height.resolve(24.0, 24.0)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kCanvas) {
-      return {n.style.width.resolve(available_width, 300.0), n.style.height.resolve(150.0, 150.0)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kSeparator) {
-      return {n.style.width.resolve(available_width, available_width), n.style.height.resolve(1.0, 1.0)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kProgress) {
-      return {n.style.width.resolve(available_width, 120.0), n.style.height.resolve(8.0, 8.0)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kInput) {
-      const double rows = std::max(1.0, number_prop(n, "minRows", n.type == "textarea" ? 3.0 : 1.0));
-      const double line = n.style.line_height > 0.0 ? n.style.line_height : n.style.font_size * 1.35;
-      return {n.style.width.resolve(available_width, std::min(available_width, 320.0)),
-              n.style.height.resolve(rows * line + n.style.padding_top + n.style.padding_bottom,
-                                     rows * line + n.style.padding_top + n.style.padding_bottom)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kMarkdown ||
-        n.handler->kind == ElementHandler::Kind::kCode ||
-        n.handler->kind == ElementHandler::Kind::kDiff) {
-      const char* prop = n.handler->kind == ElementHandler::Kind::kMarkdown ? "source" :
-                         n.handler->kind == ElementHandler::Kind::kCode ? "code" : "patch";
-      const std::string content = string_prop(n, prop);
-      const double line = n.style.line_height > 0.0 ? n.style.line_height : n.style.font_size * 1.45;
-      return {n.style.width.resolve(available_width, available_width),
-              n.style.height.resolve(line_count(content) * line + n.style.padding_top + n.style.padding_bottom,
-                                     line_count(content) * line + n.style.padding_top + n.style.padding_bottom)};
-    }
-
-    const double provisional_w = n.style.width.resolve(available_width, available_width);
-    const double inner_w = std::max(0.0, provisional_w - n.style.padding_left -
-                                             n.style.padding_right);
-    double main = 0.0;
-    double cross = 0.0;
-    size_t flow_count = 0;
-    for (size_t i = 0; i < n.children.size(); ++i) {
-      auto child_it = nodes_.find(n.children[i]);
-      if (child_it == nodes_.end() ||
-          child_it->second.style.position != Style::Position::kRelative ||
-          child_it->second.handler->kind == ElementHandler::Kind::kAnchored) {
-        continue;
-      }
-      const Node& child_node = child_it->second;
-      const Size child = natural_size(n.children[i], inner_w);
-      if (n.style.row) {
-        main += child.w + child_node.style.margin_left + child_node.style.margin_right;
-        cross = std::max(cross, child.h + child_node.style.margin_top +
-                                    child_node.style.margin_bottom);
-      } else {
-        main += child.h + child_node.style.margin_top + child_node.style.margin_bottom;
-        cross = std::max(cross, child.w + child_node.style.margin_left +
-                                    child_node.style.margin_right);
-      }
-      ++flow_count;
-    }
-    if (flow_count > 1) main += n.style.gap * (flow_count - 1);
-    Size result = n.style.row
-                      ? Size{main + n.style.padding_left + n.style.padding_right,
-                             cross + n.style.padding_top + n.style.padding_bottom}
-                      : Size{cross + n.style.padding_left + n.style.padding_right,
-                             main + n.style.padding_top + n.style.padding_bottom};
-    result.w = n.style.width.resolve(available_width, result.w);
-    result.h = n.style.height.resolve(0.0, result.h);
-    result.w = std::max(result.w, n.style.min_width);
-    result.h = std::max(result.h, n.style.min_height);
-    if (n.style.max_width.set) result.w = std::min(result.w, n.style.max_width.resolve(available_width, result.w));
-    if (n.style.max_height.set) result.h = std::min(result.h, n.style.max_height.resolve(result.h, result.h));
-    return result;
-  }
-
-  void layout_node(uint64_t id, double x, double y, double available_w,
-                   double available_h, double forced_w = -1.0,
-                   double forced_h = -1.0) {
-    Node* n = node(id);
-    if (!n) return;
-    const Size natural = natural_size(id, available_w);
-    // The parent has already resolved basis, grow/shrink, percentages, and
-    // stretching into a forced size. Applying the child's explicit width a
-    // second time would discard that flex result (notably width: 0 + grow).
-    double w = std::max(n->style.min_width,
-                        forced_w >= 0.0 ? forced_w
-                                        : n->style.width.resolve(available_w, natural.w));
-    double h = std::max(n->style.min_height,
-                        forced_h >= 0.0 ? forced_h
-                                        : n->style.height.resolve(available_h, natural.h));
-    if (n->style.max_width.set) w = std::min(w, n->style.max_width.resolve(available_w, w));
-    if (n->style.max_height.set) h = std::min(h, n->style.max_height.resolve(available_h, h));
-    n->box = {x, y, std::max(0.0, w), std::max(0.0, h)};
-    if (n->handler->kind == ElementHandler::Kind::kText || n->children.empty()) return;
-
-    const double inner_x = x + n->style.padding_left;
-    const double inner_y = y + n->style.padding_top;
-    const double inner_w = std::max(0.0, w - n->style.padding_left - n->style.padding_right);
-    const double inner_h = std::max(0.0, h - n->style.padding_top - n->style.padding_bottom);
-    if (n->handler->kind == ElementHandler::Kind::kVirtualList) {
-      n->content_height = n->children.size() * n->item_height +
-                          n->style.padding_top + n->style.padding_bottom;
-      const double max_scroll = std::max(0.0, n->content_height - h);
-      if (bool_prop(*n, "followTail") && n->children.size() != n->last_child_count) {
-        n->scroll_y = max_scroll;
-        n->scroll_target_y = max_scroll;
-      }
-      n->last_child_count = n->children.size();
-      n->scroll_y = std::clamp(n->scroll_y, 0.0, max_scroll);
-      n->scroll_target_y = std::clamp(n->scroll_target_y, 0.0, max_scroll);
-      const size_t first = static_cast<size_t>(std::floor(n->scroll_y / n->item_height));
-      const size_t count = static_cast<size_t>(std::ceil(inner_h / n->item_height));
-      n->visible_start = first > n->overdraw ? first - n->overdraw : 0;
-      n->visible_end = std::min(n->children.size(), first + count + n->overdraw + 1);
-      for (size_t i = n->visible_start; i < n->visible_end; ++i) {
-        const double bottom_alignment = string_prop(*n, "alignment") == "bottom"
-                                            ? std::max(0.0, inner_h - n->children.size() * n->item_height)
-                                            : 0.0;
-        const double child_y = inner_y + bottom_alignment + i * n->item_height - n->scroll_y;
-        layout_node(n->children[i], inner_x, child_y, inner_w, n->item_height,
-                    inner_w, n->item_height);
-      }
-      return;
-    }
-    const double main_available = n->style.row ? inner_w : inner_h;
-    size_t flow_count = 0;
-    double occupied = 0.0;
-    double total_grow = 0.0;
-    double total_shrink = 0.0;
-    std::vector<Size> sizes;
-    sizes.reserve(n->children.size());
-    for (uint64_t child_id : n->children) {
-      Node* child = node(child_id);
-      Size size = natural_size(child_id, inner_w);
-      if (child) {
-        size.w = child->style.width.resolve(inner_w, size.w);
-        size.h = child->style.height.resolve(inner_h, size.h);
-        if (child->style.max_width.set) size.w = std::min(size.w, child->style.max_width.resolve(inner_w, size.w));
-        if (child->style.max_height.set) size.h = std::min(size.h, child->style.max_height.resolve(inner_h, size.h));
-        const bool in_flow = child->style.position == Style::Position::kRelative &&
-                             child->handler->kind != ElementHandler::Kind::kAnchored;
-        if (in_flow) {
-          total_grow += child->style.flex_grow;
-          total_shrink += (n->style.row ? size.w : size.h) * child->style.flex_shrink;
-          occupied += n->style.row
-                          ? size.w + child->style.margin_left + child->style.margin_right
-                          : size.h + child->style.margin_top + child->style.margin_bottom;
-          ++flow_count;
-        }
-      }
-      sizes.push_back(size);
-    }
-    if (flow_count > 1) occupied += n->style.gap * (flow_count - 1);
-    if (occupied > main_available && total_shrink > 0.0) {
-      const double deficit = occupied - main_available;
-      for (size_t i = 0; i < n->children.size(); ++i) {
-        Node* child = node(n->children[i]);
-        if (!child || child->style.position != Style::Position::kRelative ||
-            child->handler->kind == ElementHandler::Kind::kAnchored) continue;
-        double& main_size = n->style.row ? sizes[i].w : sizes[i].h;
-        const double share = deficit * main_size * child->style.flex_shrink / total_shrink;
-        main_size = std::max(0.0, main_size - share);
-      }
-      occupied = main_available;
-    }
-    const double extra = std::max(0.0, main_available - occupied);
-    n->content_height = n->style.row
-                            ? inner_h
-                            : occupied + n->style.padding_top + n->style.padding_bottom;
-    const double max_scroll = std::max(0.0, n->content_height - h);
-    n->scroll_y = std::clamp(n->scroll_y, 0.0, max_scroll);
-    n->scroll_target_y = std::clamp(n->scroll_target_y, 0.0, max_scroll);
-    double effective_gap = n->style.gap;
-    double main_offset = 0.0;
-    if (total_grow == 0.0) {
-      if (n->style.justify == Style::Justify::kCenter) main_offset = extra * 0.5;
-      else if (n->style.justify == Style::Justify::kEnd) main_offset = extra;
-      else if (n->style.justify == Style::Justify::kSpaceBetween && flow_count > 1) {
-        effective_gap += extra / static_cast<double>(flow_count - 1);
-      }
-    }
-    double cursor = (n->style.row ? inner_x : inner_y - n->scroll_y) + main_offset;
-    for (size_t i = 0; i < n->children.size(); ++i) {
-      Node* child = node(n->children[i]);
-      if (!child) continue;
-      double child_w = sizes[i].w;
-      double child_h = sizes[i].h;
-      const bool anchored = child->handler->kind == ElementHandler::Kind::kAnchored;
-      if (child->style.position != Style::Position::kRelative || anchored) {
-        const bool fixed = child->style.position == Style::Position::kFixed;
-        const double positioning_x = fixed ? 0.0 : inner_x;
-        const double positioning_y = fixed ? 0.0 : inner_y;
-        const double positioning_w = fixed ? static_cast<double>(width_) : inner_w;
-        const double positioning_h = fixed ? static_cast<double>(height_) : inner_h;
-        double absolute_x = positioning_x + child->style.left.value_or(0.0);
-        double absolute_y = positioning_y + child->style.top.value_or(0.0);
-        if (!child->style.width.set && child->style.left && child->style.right) {
-          child_w = std::max(0.0, positioning_w - *child->style.left - *child->style.right);
-        } else if (!child->style.left && child->style.right) {
-          absolute_x = positioning_x + positioning_w - *child->style.right - child_w;
-        }
-        if (!child->style.height.set && child->style.top && child->style.bottom) {
-          child_h = std::max(0.0, positioning_h - *child->style.top - *child->style.bottom);
-        } else if (!child->style.top && child->style.bottom) {
-          absolute_y = positioning_y + positioning_h - *child->style.bottom - child_h;
-        }
-        if (anchored) {
-          BLPoint anchor_point;
-          bool has_anchor = false;
-          if (const double* anchor_id = prop_as<double>(*child, "anchorId")) {
-            if (Node* anchor_node = node(static_cast<uint64_t>(*anchor_id))) {
-              const std::string side = string_prop(*child, "side", "bottom");
-              const std::string align = string_prop(*child, "align", "start");
-              anchor_point.x = align == "center" ? anchor_node->box.x + anchor_node->box.w * 0.5
-                               : align == "end" ? anchor_node->box.x + anchor_node->box.w
-                                                : anchor_node->box.x;
-              anchor_point.y = side == "top" ? anchor_node->box.y
-                               : side == "bottom" ? anchor_node->box.y + anchor_node->box.h
-                               : align == "center" ? anchor_node->box.y + anchor_node->box.h * 0.5
-                               : align == "end" ? anchor_node->box.y + anchor_node->box.h
-                                                : anchor_node->box.y;
-              if (side == "left") anchor_point.x = anchor_node->box.x;
-              else if (side == "right") anchor_point.x = anchor_node->box.x + anchor_node->box.w;
-              has_anchor = true;
-            }
-          }
-          if (!has_anchor) {
-            if (const BLPoint* point = prop_as<BLPoint>(*child, "position")) {
-              anchor_point = *point;
-              has_anchor = true;
-            }
-          }
-          if (has_anchor) {
-            absolute_x = anchor_point.x;
-            absolute_y = anchor_point.y;
-            const std::string side = string_prop(*child, "side", "bottom");
-            const std::string align = string_prop(*child, "align", "start");
-            const double anchor_gap = number_prop(*child, "anchorGap", 4.0);
-            if (side == "top" || side == "bottom") {
-              if (align == "center") absolute_x -= child_w * 0.5;
-              else if (align == "end") absolute_x -= child_w;
-              absolute_y += side == "top" ? -(child_h + anchor_gap) : anchor_gap;
-            } else {
-              if (align == "center") absolute_y -= child_h * 0.5;
-              else if (align == "end") absolute_y -= child_h;
-              absolute_x += side == "left" ? -(child_w + anchor_gap) : anchor_gap;
-            }
-            if (const BLPoint* offset = prop_as<BLPoint>(*child, "offset")) {
-              absolute_x += offset->x;
-              absolute_y += offset->y;
-            }
-            absolute_x = std::clamp(absolute_x, 4.0, std::max(4.0, static_cast<double>(width_) - child_w - 4.0));
-            absolute_y = std::clamp(absolute_y, 4.0, std::max(4.0, static_cast<double>(height_) - child_h - 4.0));
-          }
-        }
-        layout_node(child->id, absolute_x, absolute_y, positioning_w, positioning_h, child_w, child_h);
-        continue;
-      }
-      if (child->style.flex_grow > 0.0 && total_grow > 0.0) {
-        const double share = extra * child->style.flex_grow / total_grow;
-        if (n->style.row) child_w += share;
-        else child_h += share;
-      }
-      if (n->style.row) {
-        if (!child->style.height.set && n->style.align_items == Style::Align::kStretch) {
-          child_h = std::max(0.0, inner_h - child->style.margin_top - child->style.margin_bottom);
-        }
-        double cross_y = inner_y + child->style.margin_top;
-        if (n->style.align_items == Style::Align::kCenter) cross_y = inner_y + (inner_h - child_h) * 0.5;
-        else if (n->style.align_items == Style::Align::kEnd) cross_y = inner_y + inner_h - child_h - child->style.margin_bottom;
-        cursor += child->style.margin_left;
-        layout_node(child->id, cursor, cross_y, inner_w, inner_h, child_w, child_h);
-        cursor += child_w + child->style.margin_right + effective_gap;
-      } else {
-        if (!child->style.width.set && n->style.align_items == Style::Align::kStretch) {
-          child_w = std::max(0.0, inner_w - child->style.margin_left - child->style.margin_right);
-        }
-        double cross_x = inner_x + child->style.margin_left;
-        if (n->style.align_items == Style::Align::kCenter) cross_x = inner_x + (inner_w - child_w) * 0.5;
-        else if (n->style.align_items == Style::Align::kEnd) cross_x = inner_x + inner_w - child_w - child->style.margin_right;
-        cursor += child->style.margin_top;
-        layout_node(child->id, cross_x, cursor, inner_w, inner_h, child_w, child_h);
-        cursor += child_h + child->style.margin_bottom + effective_gap;
-      }
-    }
-  }
-
-  static bool intersects(const Box& box, const BLRectI& rect) {
-    return box.x < rect.x + rect.w && rect.x < box.x + box.w &&
-           box.y < rect.y + rect.h && rect.y < box.y + box.h;
-  }
-
-  void draw_text(BLContext& context, const std::string& text, double x, double baseline,
-                 double size, uint32_t color) const {
-    if (text.empty()) return;
-    BLFont font = make_font(size);
-    context.fill_utf8_text(BLPoint(x, baseline), font, text.data(), text.size(), BLRgba32(color));
-  }
-
-  void paint_multiline(BLContext& context, const std::string& content, const Node& n,
-                       uint32_t color, double size, bool markdown, bool diff) const {
-    const double line_height = n.style.line_height > 0.0 ? n.style.line_height : size * 1.45;
-    double y = n.box.y + n.style.padding_top;
-    std::istringstream stream(content);
-    std::string line;
-    size_t line_number = 1;
-    while (std::getline(stream, line)) {
-      if (y + line_height > n.box.y + n.box.h + 1.0) break;
-      uint32_t line_color = color;
-      double line_size = size;
-      double x = n.box.x + n.style.padding_left;
-      if (diff) {
-        if (!line.empty() && line.front() == '+' && line.rfind("+++", 0) != 0) {
-          context.fill_rect(BLRect(n.box.x, y, n.box.w, line_height), BLRgba32(0x3322C55Eu));
-          line_color = 0xFF86EFACu;
-        } else if (!line.empty() && line.front() == '-' && line.rfind("---", 0) != 0) {
-          context.fill_rect(BLRect(n.box.x, y, n.box.w, line_height), BLRgba32(0x33EF4444u));
-          line_color = 0xFFFCA5A5u;
-        } else if (line.rfind("@@", 0) == 0) {
-          line_color = 0xFF93C5FDu;
-        }
-      } else if (markdown) {
-        if (line.rfind("### ", 0) == 0) { line.erase(0, 4); line_size = size * 1.12; line_color = 0xFFFFFFFFu; }
-        else if (line.rfind("## ", 0) == 0) { line.erase(0, 3); line_size = size * 1.25; line_color = 0xFFFFFFFFu; }
-        else if (line.rfind("# ", 0) == 0) { line.erase(0, 2); line_size = size * 1.45; line_color = 0xFFFFFFFFu; }
-        else if (line.rfind("- ", 0) == 0 || line.rfind("* ", 0) == 0) { line.replace(0, 1, "•"); }
-        else if (line.rfind("> ", 0) == 0) { line_color = 0xFF94A3B8u; x += 10.0; }
-      } else if (bool_prop(n, "showLineNumbers")) {
-        const std::string number_text = std::to_string(line_number);
-        draw_text(context, number_text, x, y + line_height * 0.76, size * 0.85, 0xFF64748Bu);
-        x += 42.0;
-      }
-      draw_text(context, line, x, y + line_height * 0.76, line_size, line_color);
-      y += line_height;
-      ++line_number;
-    }
-  }
-
-  void paint_special(BLContext& context, const Node& n, uint32_t color,
-                     double font_size) const {
-    const auto kind = n.handler->kind;
-    if (kind == ElementHandler::Kind::kImage) {
-      const BLImage* image = image_for(string_prop(n, "src"));
-      if (!image) {
-        context.fill_rect(BLRect(n.box.x, n.box.y, n.box.w, n.box.h), BLRgba32(0xFF252A35u));
-        context.stroke_line(n.box.x, n.box.y, n.box.x + n.box.w, n.box.y + n.box.h,
-                            BLRgba32(0xFF64748Bu));
-        context.stroke_line(n.box.x + n.box.w, n.box.y, n.box.x, n.box.y + n.box.h,
-                            BLRgba32(0xFF64748Bu));
-        return;
-      }
-      const double iw = image->width();
-      const double ih = image->height();
-      const std::string fit = string_prop(n, "objectFit", "fill");
-      BLRect destination(n.box.x, n.box.y, n.box.w, n.box.h);
-      if (fit == "contain" || fit == "scaleDown" || fit == "none") {
-        double scale = fit == "none" ? 1.0 : std::min(n.box.w / iw, n.box.h / ih);
-        if (fit == "scaleDown") scale = std::min(1.0, scale);
-        destination.w = iw * scale;
-        destination.h = ih * scale;
-        destination.x += (n.box.w - destination.w) * 0.5;
-        destination.y += (n.box.h - destination.h) * 0.5;
-        context.blit_image(destination, *image);
-      } else if (fit == "cover") {
-        const double target_ratio = n.box.w / std::max(1.0, n.box.h);
-        const double source_ratio = iw / std::max(1.0, ih);
-        BLRectI source(0, 0, image->width(), image->height());
-        if (source_ratio > target_ratio) {
-          source.w = std::max(1, static_cast<int>(ih * target_ratio));
-          source.x = (image->width() - source.w) / 2;
-        } else {
-          source.h = std::max(1, static_cast<int>(iw / target_ratio));
-          source.y = (image->height() - source.h) / 2;
-        }
-        context.blit_image(destination, *image, source);
-      } else {
-        context.blit_image(destination, *image);
-      }
-      return;
-    }
-    if (kind == ElementHandler::Kind::kCanvas) {
-      const auto* commands = prop_as<std::vector<CanvasCommand>>(n, "commands");
-      if (!commands) return;
-      for (const CanvasCommand& command : *commands) {
-        const double x = n.box.x + command.x;
-        const double y = n.box.y + command.y;
-        if (command.kind == "fillRect") {
-          if (command.radius > 0.0) context.fill_round_rect(BLRect(x, y, command.width, command.height), command.radius, command.radius, BLRgba32(command.color));
-          else context.fill_rect(BLRect(x, y, command.width, command.height), BLRgba32(command.color));
-        } else if (command.kind == "strokeRect") {
-          context.set_stroke_width(command.stroke_width);
-          if (command.radius > 0.0) context.stroke_round_rect(BLRect(x, y, command.width, command.height), command.radius, command.radius, BLRgba32(command.color));
-          else context.stroke_rect(BLRect(x, y, command.width, command.height), BLRgba32(command.color));
-        } else if (command.kind == "line") {
-          context.set_stroke_width(command.stroke_width);
-          context.stroke_line(x, y, n.box.x + command.x2, n.box.y + command.y2, BLRgba32(command.color));
-        } else if (command.kind == "circle") {
-          if (command.fill) context.fill_circle(x, y, command.radius, BLRgba32(command.color));
-          else { context.set_stroke_width(command.stroke_width); context.stroke_circle(x, y, command.radius, BLRgba32(command.color)); }
-        } else if (command.kind == "text") {
-          draw_text(context, command.text, x, y, command.font_size, command.color);
-        }
-      }
-      return;
-    }
-    if (kind == ElementHandler::Kind::kSeparator) {
-      const uint32_t separator_color = n.style.color.value_or(0xFF343A46u);
-      context.fill_rect(BLRect(n.box.x, n.box.y, n.box.w, std::max(1.0, n.box.h)), BLRgba32(separator_color));
-      return;
-    }
-    if (kind == ElementHandler::Kind::kProgress) {
-      const double maximum = std::max(0.0001, number_prop(n, "max", 100.0));
-      const double value = std::clamp(number_prop(n, "value", 0.0), 0.0, maximum);
-      const double radius = std::min(n.box.h * 0.5, n.style.border_radius > 0.0 ? n.style.border_radius : n.box.h * 0.5);
-      context.fill_round_rect(BLRect(n.box.x, n.box.y, n.box.w, n.box.h), radius, radius, BLRgba32(n.style.background.value_or(0xFF273142u)));
-      if (value > 0.0) context.fill_round_rect(BLRect(n.box.x, n.box.y, n.box.w * value / maximum, n.box.h), radius, radius, BLRgba32(n.style.color.value_or(0xFF38BDF8u)));
-      return;
-    }
-    if (kind == ElementHandler::Kind::kMarkdown) {
-      paint_multiline(context, string_prop(n, "source"), n, color, font_size, true, false);
-      return;
-    }
-    if (kind == ElementHandler::Kind::kCode) {
-      double offset = 0.0;
-      if (bool_prop(n, "showHeader")) {
-        const std::string header = string_prop(n, "language", "code");
-        context.fill_rect(BLRect(n.box.x, n.box.y, n.box.w, font_size * 2.0), BLRgba32(0xFF202632u));
-        draw_text(context, header, n.box.x + 12.0, n.box.y + font_size * 1.35, font_size * 0.85, 0xFF94A3B8u);
-        offset = font_size * 2.0;
-      }
-      Node shifted = n;
-      shifted.box.y += offset;
-      shifted.box.h = std::max(0.0, shifted.box.h - offset);
-      paint_multiline(context, string_prop(n, "code"), shifted, color, font_size, false, false);
-      return;
-    }
-    if (kind == ElementHandler::Kind::kDiff) {
-      paint_multiline(context, string_prop(n, "patch"), n, color, font_size, false, true);
-      return;
-    }
-    if (kind == ElementHandler::Kind::kInput) {
-      const std::string value = string_prop(n, "value");
-      const std::string display = value.empty() ? string_prop(n, "placeholder") : value;
-      const uint32_t display_color = value.empty() ? 0xFF64748Bu : color;
-      const double line = n.style.line_height > 0.0 ? n.style.line_height : font_size * 1.35;
-      std::istringstream stream(display);
-      std::string text;
-      const bool multiline = n.type == "textarea";
-      const double content_height = std::max(0.0, n.box.h - n.style.padding_top - n.style.padding_bottom);
-      double y = n.box.y + n.style.padding_top;
-      if (!multiline) y += std::max(0.0, (content_height - line) * 0.5);
-      double caret_y = y;
-      while (std::getline(stream, text)) {
-        caret_y = y;
-        draw_text(context, text, n.box.x + n.style.padding_left, y + line * 0.78, font_size, display_color);
-        y += line;
-        if (y >= n.box.y + n.box.h) break;
-      }
-      if (n.id == focused_id_ && !bool_prop(n, "readOnly")) {
-        const Size measured = measure_text(value.substr(value.find_last_of('\n') == std::string::npos ? 0 : value.find_last_of('\n') + 1), font_size);
-        const double caret_x = std::min(n.box.x + n.box.w - 3.0, n.box.x + n.style.padding_left + measured.w + 1.0);
-        context.fill_rect(BLRect(caret_x, caret_y + 2.0, 1.5, line - 4.0), BLRgba32(color));
-      }
-      return;
-    }
-    if (kind == ElementHandler::Kind::kSvg) {
-      paint_svg(context, n, color);
-    }
-  }
-
-  void paint_node(BLContext& context, uint64_t id, uint32_t inherited_color,
-                  double inherited_font_size, const BLRectI* damage) {
-    Node* n = node(id);
-    if (!n || !n->style.visible) return;
-    const bool node_intersects = !damage || intersects(n->box, *damage);
-    const bool clips_children = n->handler->kind == ElementHandler::Kind::kVirtualList ||
-                                n->style.overflow != Style::Overflow::kVisible;
-    if (!node_intersects && (clips_children || n->children.empty())) return;
-    ++painted_nodes_;
-    const uint32_t color = n->style.color.value_or(inherited_color);
-    const double font_size = n->style.font_size > 0.0 ? n->style.font_size : inherited_font_size;
-    context.save();
-    if (n->style.opacity < 1.0) {
-      context.set_global_alpha(context.global_alpha() * std::clamp(n->style.opacity, 0.0, 1.0));
-    }
-    if (node_intersects && n->style.background) {
-      BLRect rect(n->box.x, n->box.y, n->box.w, n->box.h);
-      if (n->style.border_radius > 0.0) {
-        context.fill_round_rect(rect, n->style.border_radius, n->style.border_radius,
-                                BLRgba32(*n->style.background));
-      } else {
-        context.fill_rect(rect, BLRgba32(*n->style.background));
-      }
-    }
-    if (node_intersects && n->style.border_width > 0.0 && n->style.border_color) {
-      context.set_stroke_width(n->style.border_width);
-      const double inset = n->style.border_width * 0.5;
-      BLRect rect(n->box.x + inset, n->box.y + inset,
-                  std::max(0.0, n->box.w - n->style.border_width),
-                  std::max(0.0, n->box.h - n->style.border_width));
-      if (n->style.border_radius > 0.0) {
-        context.stroke_round_rect(rect, n->style.border_radius, n->style.border_radius,
-                                  BLRgba32(*n->style.border_color));
-      } else {
-        context.stroke_rect(rect, BLRgba32(*n->style.border_color));
-      }
-    }
-    if (node_intersects && n->handler->kind == ElementHandler::Kind::kText && !n->text.empty()) {
-      BLFont font = make_font(font_size);
-      const double baseline = n->box.y + font.metrics().ascent;
-      context.fill_utf8_text(BLPoint(n->box.x, baseline), font, n->text.data(),
-                             n->text.size(), BLRgba32(color));
-    }
-    if (node_intersects) paint_special(context, *n, color, font_size);
-    if (clips_children) {
-      context.save();
-      context.clip_to_rect(BLRect(n->box.x, n->box.y, n->box.w, n->box.h));
-    }
-    if (n->handler->kind == ElementHandler::Kind::kVirtualList) {
-      for (size_t i = n->visible_start; i < n->visible_end; ++i) {
-        paint_node(context, n->children[i], color, font_size, damage);
-      }
-    } else {
-      const bool layered = std::any_of(n->children.begin(), n->children.end(), [this](uint64_t child) {
-        return nodes_.at(child).style.z_index != 0.0;
-      });
-      if (layered) {
-        std::vector<uint64_t> paint_order = n->children;
-        std::stable_sort(paint_order.begin(), paint_order.end(), [this](uint64_t a, uint64_t b) {
-          return nodes_.at(a).style.z_index < nodes_.at(b).style.z_index;
-        });
-        for (uint64_t child : paint_order) paint_node(context, child, color, font_size, damage);
-      } else {
-        for (uint64_t child : n->children) paint_node(context, child, color, font_size, damage);
-      }
-    }
-    if (clips_children) context.restore();
-    context.restore();
-  }
+#include "renderer_paint.inc"
 
   template <typename Visitor>
   uint64_t visit_children_front_to_back(const Node& parent, const Visitor& visitor) const {
@@ -1625,6 +1229,55 @@ class Renderer {
     return inside && it->second.style.overflow == Style::Overflow::kScroll ? id : 0;
   }
 
+  Box scrollbar_thumb(const Node& node) const {
+    if (node.style.overflow != Style::Overflow::kScroll ||
+        node.content_height <= node.box.h + 0.5) return {};
+    const double track_height = std::max(0.0, node.box.h - 8.0);
+    const double thumb_height = std::max(24.0, track_height * node.box.h / node.content_height);
+    const double max_scroll = std::max(1.0, node.content_height - node.box.h);
+    const double travel = std::max(0.0, track_height - thumb_height);
+    return {node.box.x + node.box.w - 9.0, node.box.y + 4.0 + travel * node.scroll_y / max_scroll,
+            8.0, thumb_height};
+  }
+
+  uint64_t hit_test_scrollbar(uint64_t id, double x, double y) const {
+    auto it = nodes_.find(id);
+    if (it == nodes_.end() || !it->second.style.visible) return 0;
+    const bool inside = it->second.box.contains(x, y);
+    if (!inside && it->second.style.overflow != Style::Overflow::kVisible) return 0;
+    if (inside && scrollbar_thumb(it->second).contains(x, y)) return id;
+    return visit_children_front_to_back(it->second, [this, x, y](uint64_t child) {
+      return hit_test_scrollbar(child, x, y);
+    });
+  }
+
+  bool begin_scrollbar_drag(double x, double y) {
+    const uint64_t id = hit_test_scrollbar(root_id_, x, y);
+    Node* target = node(id);
+    if (!target) return false;
+    const Box thumb = scrollbar_thumb(*target);
+    scrollbar_drag_id_ = id;
+    scrollbar_drag_offset_ = y - thumb.y;
+    pressed_click_id_ = 0;
+    pointer_capture_id_ = 0;
+    return true;
+  }
+
+  void drag_scrollbar(napi_env env, napi_ref callback_ref, double y) {
+    Node* target = node(scrollbar_drag_id_);
+    if (!target) return;
+    const Box thumb = scrollbar_thumb(*target);
+    const double track_height = std::max(0.0, target->box.h - 8.0);
+    const double travel = std::max(1.0, track_height - thumb.h);
+    const double ratio = std::clamp((y - target->box.y - 4.0 - scrollbar_drag_offset_) / travel,
+                                    0.0, 1.0);
+    target->scroll_y = ratio * std::max(0.0, target->content_height - target->box.h);
+    target->scroll_target_y = target->scroll_y;
+    scrolling_nodes_.erase(scrollbar_drag_id_);
+    invalidate_layout(scrollbar_drag_id_);
+    emit_scroll(env, callback_ref, scrollbar_drag_id_, 0.0);
+  }
+
   uint64_t hit_test_input(uint64_t id, double x, double y) const {
     auto it = nodes_.find(id);
     if (it == nodes_.end() || !it->second.style.visible) return 0;
@@ -1662,6 +1315,18 @@ class Renderer {
                       it->second.events.count("mouseLeave")) ? id : 0;
   }
 
+  uint64_t hit_test_selectable_text(uint64_t id, double x, double y) const {
+    auto it = nodes_.find(id);
+    if (it == nodes_.end() || !it->second.style.visible) return 0;
+    const bool inside = it->second.box.contains(x, y);
+    if (!inside && it->second.style.overflow != Style::Overflow::kVisible) return 0;
+    if (const uint64_t hit = visit_children_front_to_back(it->second, [this, x, y](uint64_t child) {
+          return hit_test_selectable_text(child, x, y);
+        })) return hit;
+    return inside && it->second.handler->kind == ElementHandler::Kind::kText &&
+                   bool_prop(it->second, "selectable") ? id : 0;
+  }
+
   void update_hover(napi_env env, napi_ref callback_ref, double x, double y) {
     const uint64_t next = hit_test_hoverable(root_id_, x, y);
     if (next == hovered_id_) return;
@@ -1682,6 +1347,46 @@ class Renderer {
     for (uint64_t id : outside) emit_to(env, callback_ref, id, "mouseDownOutside");
   }
 
+  std::string descendant_text(uint64_t id) const {
+    auto found = nodes_.find(id);
+    if (found == nodes_.end()) return {};
+    if (!found->second.text.empty()) return found->second.text;
+    std::string result;
+    for (uint64_t child : found->second.children) {
+      const std::string text = descendant_text(child);
+      if (text.empty()) continue;
+      if (!result.empty()) result.push_back(' ');
+      result += text;
+    }
+    return result;
+  }
+
+  void collect_accessibility(uint64_t id, std::vector<AccessibilityNode>& result) const {
+    auto found = nodes_.find(id);
+    if (found == nodes_.end() || !found->second.style.visible) return;
+    const Node& node = found->second;
+    std::string role = string_prop(node, "accessibilityRole");
+    if (role.empty()) {
+      if (node.type == "button") role = "button";
+      else if (node.handler->kind == ElementHandler::Kind::kInput) role = "textbox";
+      else if (node.handler->kind == ElementHandler::Kind::kImage) role = "image";
+    }
+    if (!role.empty()) {
+      std::string label = string_prop(node, "accessibilityLabel");
+      if (label.empty()) label = string_prop(node, "alt");
+      if (label.empty()) label = descendant_text(id);
+      if (label.empty()) label = string_prop(node, "placeholder");
+      std::string checked = string_prop(node, "accessibilityChecked");
+      if (checked.empty() && node.props.find("accessibilityChecked") != node.props.end()) {
+        checked = bool_prop(node, "accessibilityChecked") ? "true" : "false";
+      }
+      result.push_back({id, role, label, string_prop(node, "accessibilityDescription"),
+                        string_prop(node, "accessibilityValue"), checked,
+                        bool_prop(node, "disabled"), bool_prop(node, "accessibilitySelected"), node.box});
+    }
+    for (uint64_t child : node.children) collect_accessibility(child, result);
+  }
+
   void collect_focusable(uint64_t id, std::vector<uint64_t>& result) const {
     auto it = nodes_.find(id);
     if (it == nodes_.end() || !it->second.style.visible) return;
@@ -1696,7 +1401,7 @@ class Renderer {
 
   void focus_next(napi_env env, napi_ref callback_ref, int direction) {
     std::vector<uint64_t> focusable;
-    collect_focusable(root_id_, focusable);
+    collect_focusable(modal_root_id_ ? modal_root_id_ : root_id_, focusable);
     if (focusable.empty()) return;
     auto current = std::find(focusable.begin(), focusable.end(), focused_id_);
     ptrdiff_t index = current == focusable.end() ? (direction > 0 ? -1 : 0)
@@ -1749,6 +1454,30 @@ class Renderer {
     set_number(env, payload, "y", y);
     set_number(env, payload, "button", button);
     set_number(env, payload, "deltaY", delta_y);
+    napi_value result;
+    napi_call_function(env, global, callback, 1, &payload, &result);
+  }
+
+  void emit_scroll(napi_env env, napi_ref callback_ref, uint64_t id, double delta_y) {
+    if (!callback_ref || !id) return;
+    Node* target = node(id);
+    if (!target || !target->events.count("scroll")) return;
+    napi_value callback;
+    napi_value global;
+    napi_value payload;
+    napi_get_reference_value(env, callback_ref, &callback);
+    napi_get_global(env, &global);
+    napi_create_object(env, &payload);
+    set_number(env, payload, "elementId", static_cast<double>(id));
+    set_string(env, payload, "eventType", "scroll");
+    set_number(env, payload, "x", 0.0);
+    set_number(env, payload, "y", 0.0);
+    set_number(env, payload, "button", 0.0);
+    set_number(env, payload, "deltaY", delta_y);
+    set_number(env, payload, "scrollOffset", target->scroll_y);
+    set_number(env, payload, "scrollTarget", target->scroll_target_y);
+    set_number(env, payload, "viewportSize", target->box.h);
+    set_number(env, payload, "contentSize", target->content_height);
     napi_value result;
     napi_call_function(env, global, callback, 1, &payload, &result);
   }
@@ -1826,539 +1555,17 @@ class Renderer {
   uint64_t hovered_id_ = 0;
   uint64_t pointer_capture_id_ = 0;
   uint64_t pressed_click_id_ = 0;
+  uint64_t scrollbar_drag_id_ = 0;
+  double scrollbar_drag_offset_ = 0.0;
+  uint64_t modal_root_id_ = 0;
+  uint64_t selected_text_id_ = 0;
+  size_t text_selection_anchor_ = 0;
+  size_t text_selection_focus_ = 0;
+  bool selecting_text_ = false;
   std::chrono::steady_clock::time_point last_poll_at_ = std::chrono::steady_clock::now();
 };
 
-Renderer renderer;
-napi_ref event_callback = nullptr;
-
-void check(napi_env env, napi_status status, const char* message) {
-  if (status != napi_ok) napi_throw_error(env, nullptr, message);
-}
-
-std::vector<napi_value> args(napi_env env, napi_callback_info info, size_t count) {
-  std::vector<napi_value> values(count);
-  size_t actual = count;
-  check(env, napi_get_cb_info(env, info, &actual, values.data(), nullptr, nullptr),
-        "Could not read arguments");
-  values.resize(actual);
-  return values;
-}
-
-double number(napi_env env, napi_value value, double fallback = 0.0) {
-  napi_valuetype type;
-  if (napi_typeof(env, value, &type) != napi_ok || type != napi_number) return fallback;
-  double result = fallback;
-  napi_get_value_double(env, value, &result);
-  return result;
-}
-
-bool boolean(napi_env env, napi_value value, bool fallback = false) {
-  napi_valuetype type;
-  if (napi_typeof(env, value, &type) != napi_ok || type != napi_boolean) return fallback;
-  bool result = fallback;
-  napi_get_value_bool(env, value, &result);
-  return result;
-}
-
-std::string string(napi_env env, napi_value value, const std::string& fallback = {}) {
-  napi_valuetype type;
-  if (napi_typeof(env, value, &type) != napi_ok || type != napi_string) return fallback;
-  size_t length = 0;
-  napi_get_value_string_utf8(env, value, nullptr, 0, &length);
-  std::string result(length + 1, '\0');
-  napi_get_value_string_utf8(env, value, result.data(), result.size(), &length);
-  result.resize(length);
-  return result;
-}
-
-napi_value property(napi_env env, napi_value object, const char* name) {
-  bool has = false;
-  napi_has_named_property(env, object, name, &has);
-  if (!has) return nullptr;
-  napi_value value;
-  napi_get_named_property(env, object, name, &value);
-  return value;
-}
-
-uint64_t id_arg(napi_env env, napi_value value) {
-  return static_cast<uint64_t>(std::max(0.0, number(env, value)));
-}
-
-Dimension dimension(napi_env env, napi_value value) {
-  Dimension result;
-  if (!value) return result;
-  napi_valuetype type;
-  napi_typeof(env, value, &type);
-  if (type == napi_number) {
-    result.set = true;
-    result.value = number(env, value);
-  } else if (type == napi_string) {
-    std::string text = string(env, value);
-    if (!text.empty() && text.back() == '%') {
-      try {
-        result.set = true;
-        result.percent = true;
-        result.value = std::stod(text.substr(0, text.size() - 1));
-      } catch (...) {
-      }
-    }
-  }
-  return result;
-}
-
-std::optional<uint32_t> color(napi_env env, napi_value value) {
-  if (!value) return std::nullopt;
-  std::string text = string(env, value);
-  if (text.empty() || text[0] != '#') return std::nullopt;
-  text.erase(text.begin());
-  if (text.size() == 3) {
-    std::string expanded;
-    for (char c : text) { expanded.push_back(c); expanded.push_back(c); }
-    text = expanded;
-  }
-  if (text.size() != 6 && text.size() != 8) return std::nullopt;
-  try {
-    const uint32_t rgb = static_cast<uint32_t>(std::stoul(text.substr(0, 6), nullptr, 16));
-    const uint32_t alpha = text.size() == 8
-                               ? static_cast<uint32_t>(std::stoul(text.substr(6, 2), nullptr, 16))
-                               : 0xFFu;
-    return (alpha << 24) | rgb;
-  } catch (...) {
-    return std::nullopt;
-  }
-}
-
-PropValue prop_value_from_js(napi_env env, napi_value value) {
-  if (!value) return std::monostate{};
-  napi_valuetype type = napi_undefined;
-  if (napi_typeof(env, value, &type) != napi_ok ||
-      type == napi_undefined || type == napi_null) {
-    return std::monostate{};
-  }
-  if (type == napi_number) return number(env, value);
-  if (type == napi_boolean) return boolean(env, value);
-  if (type == napi_string) return string(env, value);
-  if (type != napi_object) return std::monostate{};
-
-  bool is_array = false;
-  napi_is_array(env, value, &is_array);
-  if (is_array) {
-    uint32_t length = 0;
-    napi_get_array_length(env, value, &length);
-    std::vector<CanvasCommand> commands;
-    commands.reserve(length);
-    for (uint32_t i = 0; i < length; ++i) {
-      napi_value raw;
-      napi_get_element(env, value, i, &raw);
-      napi_valuetype raw_type = napi_undefined;
-      napi_typeof(env, raw, &raw_type);
-      if (raw_type != napi_object) continue;
-      CanvasCommand command;
-      if (auto item = property(env, raw, "kind")) command.kind = string(env, item);
-      if (auto item = property(env, raw, "x")) command.x = number(env, item);
-      if (auto item = property(env, raw, "y")) command.y = number(env, item);
-      if (auto item = property(env, raw, "x1")) command.x = number(env, item);
-      if (auto item = property(env, raw, "y1")) command.y = number(env, item);
-      if (auto item = property(env, raw, "x2")) command.x2 = number(env, item);
-      if (auto item = property(env, raw, "y2")) command.y2 = number(env, item);
-      if (auto item = property(env, raw, "width")) command.width = number(env, item);
-      if (auto item = property(env, raw, "height")) command.height = number(env, item);
-      if (auto item = property(env, raw, "radius")) command.radius = number(env, item);
-      if (auto item = property(env, raw, "widthPx")) command.stroke_width = number(env, item, 1.0);
-      if (auto item = property(env, raw, "fontSize")) command.font_size = number(env, item, 14.0);
-      if (auto item = property(env, raw, "color")) command.color = color(env, item).value_or(command.color);
-      if (auto item = property(env, raw, "fill")) command.fill = boolean(env, item, true);
-      if (auto item = property(env, raw, "text")) command.text = string(env, item);
-      if (!command.kind.empty()) commands.push_back(std::move(command));
-    }
-    return commands;
-  }
-
-  napi_value x = property(env, value, "x");
-  napi_value y = property(env, value, "y");
-  if (x && y) return BLPoint(number(env, x), number(env, y));
-  return std::monostate{};
-}
-
-Style style_from_js(napi_env env, napi_value object) {
-  Style style;
-  napi_valuetype type;
-  if (!object || napi_typeof(env, object, &type) != napi_ok || type != napi_object) return style;
-  style.width = dimension(env, property(env, object, "width"));
-  style.height = dimension(env, property(env, object, "height"));
-  if (auto value = property(env, object, "minWidth")) style.min_width = number(env, value);
-  if (auto value = property(env, object, "minHeight")) style.min_height = number(env, value);
-  if (auto value = property(env, object, "flexDirection")) style.row = string(env, value) == "row";
-  if (auto value = property(env, object, "flexGrow")) style.flex_grow = number(env, value);
-  if (auto value = property(env, object, "flexShrink")) style.flex_shrink = number(env, value, 1.0);
-  if (auto value = property(env, object, "gap")) style.gap = number(env, value);
-  if (auto value = property(env, object, "padding")) {
-    style.padding_left = style.padding_right = style.padding_top =
-        style.padding_bottom = number(env, value);
-  }
-  if (auto value = property(env, object, "paddingHorizontal")) {
-    style.padding_left = style.padding_right = number(env, value);
-  }
-  if (auto value = property(env, object, "paddingVertical")) {
-    style.padding_top = style.padding_bottom = number(env, value);
-  }
-  if (auto value = property(env, object, "paddingLeft")) style.padding_left = number(env, value);
-  if (auto value = property(env, object, "paddingRight")) style.padding_right = number(env, value);
-  if (auto value = property(env, object, "paddingTop")) style.padding_top = number(env, value);
-  if (auto value = property(env, object, "paddingBottom")) style.padding_bottom = number(env, value);
-  if (auto value = property(env, object, "marginLeft")) style.margin_left = number(env, value);
-  if (auto value = property(env, object, "marginRight")) style.margin_right = number(env, value);
-  if (auto value = property(env, object, "marginTop")) style.margin_top = number(env, value);
-  if (auto value = property(env, object, "marginBottom")) style.margin_bottom = number(env, value);
-  style.background = color(env, property(env, object, "backgroundColor"));
-  style.color = color(env, property(env, object, "color"));
-  style.border_color = color(env, property(env, object, "borderColor"));
-  if (auto value = property(env, object, "fontSize")) style.font_size = number(env, value, 16.0);
-  if (auto value = property(env, object, "lineHeight")) style.line_height = number(env, value);
-  if (auto value = property(env, object, "borderRadius")) style.border_radius = number(env, value);
-  if (auto value = property(env, object, "borderWidth")) style.border_width = number(env, value);
-  if (auto value = property(env, object, "opacity")) style.opacity = number(env, value, 1.0);
-  if (auto value = property(env, object, "visibility")) style.visible = string(env, value) != "hidden";
-  if (auto value = property(env, object, "overflow")) {
-    const std::string overflow = string(env, value);
-    if (overflow == "scroll") style.overflow = Style::Overflow::kScroll;
-    else if (overflow == "hidden") style.overflow = Style::Overflow::kHidden;
-  }
-  if (auto value = property(env, object, "overflowY")) {
-    const std::string overflow = string(env, value);
-    if (overflow == "scroll") style.overflow = Style::Overflow::kScroll;
-    else if (overflow == "hidden") style.overflow = Style::Overflow::kHidden;
-  }
-  if (auto value = property(env, object, "position")) {
-    const std::string position = string(env, value);
-    if (position == "absolute") style.position = Style::Position::kAbsolute;
-    else if (position == "fixed") style.position = Style::Position::kFixed;
-  }
-  if (auto value = property(env, object, "left")) style.left = number(env, value);
-  if (auto value = property(env, object, "right")) style.right = number(env, value);
-  if (auto value = property(env, object, "top")) style.top = number(env, value);
-  if (auto value = property(env, object, "bottom")) style.bottom = number(env, value);
-  if (auto value = property(env, object, "zIndex")) style.z_index = number(env, value);
-  style.max_width = dimension(env, property(env, object, "maxWidth"));
-  style.max_height = dimension(env, property(env, object, "maxHeight"));
-  if (auto value = property(env, object, "alignItems")) {
-    const std::string align = string(env, value);
-    if (align == "center") style.align_items = Style::Align::kCenter;
-    else if (align == "end" || align == "flex-end") style.align_items = Style::Align::kEnd;
-    else if (align == "start" || align == "flex-start") style.align_items = Style::Align::kStart;
-  }
-  if (auto value = property(env, object, "justifyContent")) {
-    const std::string justify = string(env, value);
-    if (justify == "center") style.justify = Style::Justify::kCenter;
-    else if (justify == "end" || justify == "flex-end") style.justify = Style::Justify::kEnd;
-    else if (justify == "spaceBetween" || justify == "space-between") style.justify = Style::Justify::kSpaceBetween;
-  }
-  return style;
-}
-
-napi_value undefined(napi_env env) {
-  napi_value result;
-  napi_get_undefined(env, &result);
-  return result;
-}
-
-napi_value init(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 1);
-  napi_value options = values.empty() ? nullptr : values[0];
-  std::string title = "BlendX";
-  int width = 900;
-  int height = 620;
-  uint32_t threads = 0;
-  std::string font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-  bool headless = false;
-  if (options) {
-    if (auto value = property(env, options, "title")) title = string(env, value, title);
-    if (auto value = property(env, options, "width")) width = static_cast<int>(number(env, value, width));
-    if (auto value = property(env, options, "height")) height = static_cast<int>(number(env, value, height));
-    if (auto value = property(env, options, "threads")) threads = static_cast<uint32_t>(number(env, value));
-    if (auto value = property(env, options, "fontPath")) font_path = string(env, value, font_path);
-    if (auto value = property(env, options, "headless")) headless = boolean(env, value);
-  }
-  std::string error;
-  if (!renderer.init(title, width, height, threads, font_path, headless, error)) {
-    napi_throw_error(env, nullptr, error.c_str());
-  }
-  return undefined(env);
-}
-
-napi_value shutdown(napi_env env, napi_callback_info) {
-  renderer.shutdown();
-  return undefined(env);
-}
-
-napi_value create_element(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 2);
-  if (values.size() == 2) renderer.create_node(id_arg(env, values[0]), string(env, values[1]));
-  return undefined(env);
-}
-
-napi_value destroy_element(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 1);
-  std::vector<uint64_t> destroyed;
-  if (!values.empty()) renderer.destroy_node(id_arg(env, values[0]), destroyed);
-  napi_value result;
-  napi_create_array_with_length(env, destroyed.size(), &result);
-  for (size_t i = 0; i < destroyed.size(); ++i) {
-    napi_value value;
-    napi_create_double(env, static_cast<double>(destroyed[i]), &value);
-    napi_set_element(env, result, static_cast<uint32_t>(i), value);
-  }
-  return result;
-}
-
-napi_value append_child(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 2);
-  if (values.size() == 2) renderer.append_child(id_arg(env, values[0]), id_arg(env, values[1]));
-  return undefined(env);
-}
-
-napi_value remove_child(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 2);
-  if (values.size() == 2) renderer.remove_child(id_arg(env, values[0]), id_arg(env, values[1]));
-  return undefined(env);
-}
-
-napi_value insert_before(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 3);
-  if (values.size() == 3) renderer.insert_before(id_arg(env, values[0]), id_arg(env, values[1]), id_arg(env, values[2]));
-  return undefined(env);
-}
-
-napi_value set_style(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 2);
-  if (values.size() == 2) {
-    renderer.set_style(id_arg(env, values[0]), style_from_js(env, values[1]));
-  }
-  return undefined(env);
-}
-
-napi_value set_text(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 2);
-  if (values.size() == 2) {
-    renderer.set_text(id_arg(env, values[0]), string(env, values[1]));
-  }
-  return undefined(env);
-}
-
-napi_value set_custom_prop(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 3);
-  if (values.size() == 3) {
-    renderer.set_custom_prop(id_arg(env, values[0]), string(env, values[1]),
-                             prop_value_from_js(env, values[2]));
-  }
-  return undefined(env);
-}
-
-napi_value set_event_listener(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 3);
-  if (values.size() == 3) {
-    renderer.set_event(id_arg(env, values[0]), string(env, values[1]), boolean(env, values[2]));
-  }
-  return undefined(env);
-}
-
-napi_value set_root(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 1);
-  if (!values.empty()) renderer.set_root(id_arg(env, values[0]));
-  return undefined(env);
-}
-
-napi_value commit_mutations(napi_env env, napi_callback_info) {
-  renderer.mark_dirty();
-  return undefined(env);
-}
-
-napi_value apply_batch(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 1);
-  if (values.empty()) return undefined(env);
-  bool is_array = false;
-  napi_is_array(env, values[0], &is_array);
-  if (!is_array) {
-    napi_throw_type_error(env, nullptr, "applyBatch expects an array");
-    return undefined(env);
-  }
-  uint32_t count = 0;
-  napi_get_array_length(env, values[0], &count);
-  for (uint32_t i = 0; i < count; ++i) {
-    napi_value operation;
-    napi_get_element(env, values[0], i, &operation);
-    bool operation_is_array = false;
-    napi_is_array(env, operation, &operation_is_array);
-    if (!operation_is_array) continue;
-    uint32_t length = 0;
-    napi_get_array_length(env, operation, &length);
-    if (length == 0) continue;
-    auto at = [&](uint32_t index) {
-      napi_value value;
-      napi_get_element(env, operation, index, &value);
-      return value;
-    };
-    const std::string kind = string(env, at(0));
-    if (kind == "create" && length >= 3) {
-      renderer.create_node(id_arg(env, at(1)), string(env, at(2)));
-    } else if (kind == "append" && length >= 3) {
-      renderer.append_child(id_arg(env, at(1)), id_arg(env, at(2)));
-    } else if (kind == "remove" && length >= 3) {
-      renderer.remove_child(id_arg(env, at(1)), id_arg(env, at(2)));
-    } else if (kind == "insert" && length >= 4) {
-      renderer.insert_before(id_arg(env, at(1)), id_arg(env, at(2)), id_arg(env, at(3)));
-    } else if (kind == "style" && length >= 3) {
-      renderer.set_style(id_arg(env, at(1)), style_from_js(env, at(2)));
-    } else if (kind == "text" && length >= 3) {
-      renderer.set_text(id_arg(env, at(1)), string(env, at(2)));
-    } else if (kind == "event" && length >= 4) {
-      renderer.set_event(id_arg(env, at(1)), string(env, at(2)), boolean(env, at(3)));
-    } else if (kind == "prop" && length >= 4) {
-      renderer.set_custom_prop(id_arg(env, at(1)), string(env, at(2)),
-                               prop_value_from_js(env, at(3)));
-    } else if (kind == "root" && length >= 2) {
-      renderer.set_root(id_arg(env, at(1)));
-    }
-  }
-  renderer.record_mutations(count);
-  return undefined(env);
-}
-
-napi_value set_event_callback(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 1);
-  if (event_callback) {
-    napi_delete_reference(env, event_callback);
-    event_callback = nullptr;
-  }
-  if (!values.empty()) napi_create_reference(env, values[0], 1, &event_callback);
-  return undefined(env);
-}
-
-napi_value poll(napi_env env, napi_callback_info) {
-  napi_value result;
-  napi_get_boolean(env, renderer.poll(env, event_callback), &result);
-  return result;
-}
-
-napi_value render_frame(napi_env env, napi_callback_info) {
-  renderer.render_frame(env);
-  return undefined(env);
-}
-
-napi_value focus_element(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 1);
-  if (!values.empty()) renderer.focus_element(env, event_callback, id_arg(env, values[0]), true);
-  return undefined(env);
-}
-
-napi_value dispatch_pointer(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 4);
-  if (values.size() >= 3) {
-    renderer.dispatch_pointer(env, event_callback, string(env, values[0]),
-                              number(env, values[1]), number(env, values[2]),
-                              values.size() >= 4 ? static_cast<int>(number(env, values[3], 1.0)) : 1);
-  }
-  return undefined(env);
-}
-
-napi_value dispatch_key(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 1);
-  if (!values.empty()) renderer.dispatch_key(env, event_callback, string(env, values[0]));
-  return undefined(env);
-}
-
-napi_value scroll_to_item(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 2);
-  if (values.size() == 2) {
-    renderer.scroll_to_item(id_arg(env, values[0]),
-                            static_cast<size_t>(std::max(0.0, number(env, values[1]))));
-  }
-  return undefined(env);
-}
-
-napi_value get_element_box(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 1);
-  const Box box = values.empty() ? Box{} : renderer.element_box(id_arg(env, values[0]));
-  napi_value result;
-  napi_create_object(env, &result);
-  auto set = [&](const char* name, double value) {
-    napi_value js_value;
-    napi_create_double(env, value, &js_value);
-    napi_set_named_property(env, result, name, js_value);
-  };
-  set("x", box.x);
-  set("y", box.y);
-  set("width", box.w);
-  set("height", box.h);
-  return result;
-}
-
-napi_value capture_screenshot(napi_env env, napi_callback_info info) {
-  auto values = args(env, info, 1);
-  if (values.empty() || renderer.capture_screenshot(string(env, values[0])) != BL_SUCCESS) {
-    napi_throw_error(env, nullptr, "Could not write BlendX framebuffer screenshot");
-  }
-  return undefined(env);
-}
-
-napi_value get_stats(napi_env env, napi_callback_info) {
-  napi_value result;
-  napi_create_object(env, &result);
-  auto set = [&](const char* name, double value) {
-    napi_value js_value;
-    napi_create_double(env, value, &js_value);
-    napi_set_named_property(env, result, name, js_value);
-  };
-  set("width", renderer.width());
-  set("height", renderer.height());
-  set("nodeCount", renderer.node_count());
-  set("frameCount", static_cast<double>(renderer.frame_count()));
-  set("renderTimeMs", renderer.render_time_ms());
-  set("layoutTimeMs", renderer.layout_time_ms());
-  set("paintTimeMs", renderer.paint_time_ms());
-  set("presentTimeMs", renderer.present_time_ms());
-  set("paintedPixels", static_cast<double>(renderer.painted_pixels()));
-  set("paintedNodes", static_cast<double>(renderer.painted_nodes()));
-  set("dirtyRectCount", renderer.dirty_rect_count());
-  set("mutationsLastCommit", renderer.mutations_last_commit());
-  set("frameP50Ms", renderer.frame_percentile(0.50));
-  set("frameP95Ms", renderer.frame_percentile(0.95));
-  set("frameMaxMs", renderer.frame_percentile(1.0));
-  set("threads", renderer.threads());
-  return result;
-}
-
-napi_value module_init(napi_env env, napi_value exports) {
-  const napi_property_descriptor properties[] = {
-      {"init", nullptr, init, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"shutdown", nullptr, shutdown, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"createElement", nullptr, create_element, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"destroyElement", nullptr, destroy_element, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"appendChild", nullptr, append_child, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"removeChild", nullptr, remove_child, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"insertBefore", nullptr, insert_before, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"setStyle", nullptr, set_style, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"setText", nullptr, set_text, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"setCustomProp", nullptr, set_custom_prop, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"setEventListener", nullptr, set_event_listener, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"setRoot", nullptr, set_root, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"commitMutations", nullptr, commit_mutations, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"applyBatch", nullptr, apply_batch, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"setEventCallback", nullptr, set_event_callback, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"poll", nullptr, poll, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"renderFrame", nullptr, render_frame, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"focusElement", nullptr, focus_element, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"dispatchPointer", nullptr, dispatch_pointer, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"dispatchKey", nullptr, dispatch_key, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"scrollToItem", nullptr, scroll_to_item, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"getElementBox", nullptr, get_element_box, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"captureScreenshot", nullptr, capture_screenshot, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"getStats", nullptr, get_stats, nullptr, nullptr, nullptr, napi_default, nullptr},
-  };
-  napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
-  return exports;
-}
+#include "napi_protocol.inc"
 
 }  // namespace
 

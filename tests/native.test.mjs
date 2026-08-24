@@ -201,6 +201,56 @@ test("visible overflow descendants receive pointer events outside their parent",
   native.shutdown()
 })
 
+test("scrollbars expose metrics and support thumb dragging", () => {
+  native.init({ width: 120, height: 100, headless: true })
+  let latestOffset = 0
+  native.setEventCallback((event) => {
+    if (event.eventType === "scroll") latestOffset = event.scrollOffset
+  })
+  const batch = [
+    ["create", 1, "div"],
+    ["style", 1, { width: 120, height: 100, overflow: "scroll" }],
+    ["event", 1, "scroll", true],
+  ]
+  for (let id = 2; id < 12; id += 1) {
+    batch.push(["create", id, "div"])
+    batch.push(["style", id, { width: "100%", height: 40, flexShrink: 0 }])
+    batch.push(["append", 1, id])
+  }
+  batch.push(["root", 1])
+  native.applyBatch(batch)
+  native.commitMutations()
+  native.renderFrame()
+
+  native.dispatchPointer("mouseDown", 116, 10, 1)
+  native.dispatchPointer("mouseMove", 116, 72, 1)
+  native.dispatchPointer("mouseUp", 116, 72, 1)
+  assert.ok(latestOffset > 200, latestOffset)
+  native.shutdown()
+})
+
+test("text whiteSpace normal wraps and contributes multiline height", () => {
+  native.init({ width: 140, height: 100, headless: true })
+  native.applyBatch([
+    ["create", 1, "div"],
+    ["style", 1, { width: 60, height: 100 }],
+    ["create", 2, "text"],
+    ["style", 2, { width: 60, fontSize: 14, lineHeight: 18, whiteSpace: "normal" }],
+    ["prop", 2, "selectable", true],
+    ["text", 2, "alpha beta gamma delta"],
+    ["append", 1, 2],
+    ["root", 1],
+  ])
+  native.commitMutations()
+  native.renderFrame()
+  assert.ok(native.getElementBox(2).height >= 54, JSON.stringify(native.getElementBox(2)))
+  native.dispatchPointer("mouseDown", 1, 8, 1)
+  native.dispatchPointer("mouseMove", 58, 8, 1)
+  native.dispatchPointer("mouseUp", 58, 8, 1)
+  assert.equal(native.getSelectedText(), "alpha")
+  native.shutdown()
+})
+
 test("renders rich elements, structured props, and absolute overlays", () => {
   native.init({ width: 640, height: 480, headless: true })
   const elements = ["img", "svg", "canvas", "button", "separator", "badge", "progress", "markdown", "code", "diff", "textarea", "anchored"]

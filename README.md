@@ -52,9 +52,10 @@ To run the large animated workload:
 npm run stress
 ```
 
-It retains 20,000 rows, paints only the visible rows, changes 320 small elements
-at 60 Hz, and prints renderer statistics once per second. Scroll the list with
-the mouse wheel. For a repeatable run without window-presentation overhead:
+It models 20,000 rows while mounting only the visible window, changes 320 small
+elements at 60 Hz, and prints renderer statistics once per second. Scroll the
+list with the mouse wheel or drag the visible scrollbar. For a repeatable run
+without window-presentation overhead:
 
 ```bash
 npm run benchmark
@@ -158,9 +159,10 @@ npm run compile:components
 ```
 
 The executable still uses the target operating system's SDL2 and GUI libraries.
-On the development machine the packed chat is about 5.9 MB, including roughly
-235 KB of optimized Hermes bytecode. `tools/hermes-app.mjs` accepts any TS/TSX
-entry, so additional examples do not require a new native host.
+On the development machine the packed chat is about 6.8 MB (6.5 MiB), including
+optimized Hermes bytecode and the embedded Roboto font. `tools/hermes-app.mjs`
+accepts any TS/TSX entry, so additional examples do not require a new native
+host or external application assets.
 See [`PACKAGES.md`](PACKAGES.md) for the full dependency inventory.
 
 ## Reproducibility and CI
@@ -201,20 +203,24 @@ Blend2D's shared thread pool.
 - Paint: colors, opacity, borders, rounded rectangles, raster image fit modes,
   a useful SVG path/shape subset, retained canvas commands, Markdown blocks,
   line-numbered code, colored diffs, badges, separators, and progress bars
-- Input: mouse down/up/click, wheel scrolling, deepest-node hit testing,
-  hover/active states, outside presses, Tab focus traversal, UTF-8 text input,
-  Backspace, Enter/Space activation, change/submit/key-down/key-up events
+- Input: mouse down/up/click, wheel and draggable-scrollbar scrolling,
+  deepest-node hit testing, hover/active states, outside presses, modal Tab
+  focus trapping, UTF-8 selection/editing, clipboard, undo/redo, password
+  masking, IME pre-edit display, and keyboard activation
 - Overlays: out-of-flow anchored nodes with top/right/bottom/left placement,
   start/center/end alignment, element-ref or point anchors, viewport clamping,
   gaps, and x/y offsets
-- Components: compound `Tooltip`, `Select`, and filterable `Combobox`
+- Components: `Tooltip`, `Select`, `Combobox`, checkbox/radio/switch/slider,
+  tabs, accordion/collapsible, dropdown/context/submenus, `Dialog`, toasts,
+  memory-windowed `VirtualList`, and declarative `motion`
 - Window: resize and close handling through SDL2
 - Renderer: PRGB32 Blend2D framebuffer, coalesced damage rectangles, partial
   framebuffer presentation, runtime-selected Blend2D SIMD/JIT pipelines
 - Protocol: one Node-API mutation batch per React commit; unchanged style
   objects are filtered before entering the batch
-- Virtualization: uniform-height `virtual-list` with configurable overdraw;
-  offscreen retained rows are neither laid out nor painted
+- Virtualization: the generic `VirtualList` mounts only the visible React/native
+  rows, supports known variable heights, overdraw, follow-tail, range reporting,
+  scroll anchoring, and imperative index/offset scrolling
 - Extensibility: native element registry maps host names to behavior handlers
 - Tests: a headless renderer mode that still executes Blend2D
 
@@ -228,9 +234,15 @@ React queues mutations such as `createElement`, `appendChild`, `setStyle`, and
 nodes, so unchanged UI does not cross N-API again. A mutation records the old
 damage, layout records the new damage, and overlapping rectangles are merged.
 Painting traverses only nodes intersecting each damage rectangle. The Hermes
-host supplies the timers, microtask draining, console, `performance.now`,
-arguments, and SIGINT handling needed by React and the examples while SDL
-events are pumped.
+host supplies timers, microtask draining, console, `performance.now`, arguments,
+and SIGINT handling. Its event loop blocks in `SDL_WaitEventTimeout` while idle,
+wakes immediately for native input, and uses the next JavaScript timer as its
+deadline rather than polling every 8 ms.
+
+The native renderer is organized into `renderer_model.h`,
+`renderer_layout.inc`, `renderer_paint.inc`, the input/event core in
+`addon.cpp`, and `napi_protocol.inc`. They remain one optimized translation
+unit while keeping feature ownership and review boundaries explicit.
 
 `getStats()` separates `layoutTimeMs`, `paintTimeMs`, and `presentTimeMs`, and
 also reports dirty rectangles, painted pixels/nodes, mutations, and rolling
@@ -241,8 +253,8 @@ not contain handwritten intrinsics.
 
 ## Current stress results
 
-On the development machine, the headless 1000×760 workload retained 40,325
-native nodes and produced the following representative result:
+Before memory-windowing, the headless 1000×760 stress workload retained 40,325
+native nodes and produced the following historical representative result:
 
 | Measurement | Result |
 |---|---:|
@@ -258,11 +270,12 @@ Headless mode excludes SDL/window-server presentation. In a forwarded X11
 session, presentation dominates and should be evaluated separately from CPU
 layout and Blend2D paint time.
 
-The 5,000-message chat benchmark retains 11,312 nodes. A representative packed
-Hermes headless run mounted in 126 ms and then updated its animated
-canvas/progress at about a 0.43 ms median renderer frame time while painting 50
-intersecting nodes and 7,480 pixels per update. These figures include a new
-runtime migration and should be re-sampled before making cross-runtime claims.
+The current 5,000-message chat benchmark retains 97 native nodes. A
+representative packed Hermes headless run mounted in about 5 ms and updated its
+animated canvas/progress at about a 0.45 ms median and 0.92 ms p95 renderer
+frame time while painting 50 intersecting nodes and 7,480 pixels per update.
+See [`CAPABILITIES.md`](CAPABILITIES.md) for the measurement scope and memory
+comparison.
 
 ## Adding another native element
 
@@ -273,8 +286,8 @@ points, and retained canvas command arrays. Images and SVG file contents are
 cached on first use.
 
 This is not yet a complete desktop toolkit. The next substantial pieces are a
-full flexbox implementation, text shaping across fallback fonts and bidi,
-selection and clipboard support, IME composition, accessible platform nodes,
-and production-grade CommonMark/syntax highlighting. The current Markdown and
-code painters intentionally cover the chat/demo subset rather than replacing a
-complete parser.
+full flexbox implementation, automatic variable-row measurement, text shaping
+across fallback fonts and bidi, OS accessibility adapters, candidate-window
+IME integration, native animation timelines, and production-grade
+CommonMark/syntax highlighting. The current Markdown and code painters
+intentionally cover the demo subset rather than replacing complete parsers.
