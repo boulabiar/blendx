@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
+import { createRequire } from "node:module"
 import test from "node:test"
 import React from "react"
-import { render } from "../dist/src/index.js"
+
+const require = createRequire(import.meta.url)
+globalThis.__blendxNative = require("../dist/native/blendx_native.node")
+const { render } = await import("../dist/src/index.js")
 
 test("React mounts through the reconciler and renders with Blend2D", async () => {
   const tree = () => React.createElement(

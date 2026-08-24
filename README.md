@@ -6,19 +6,21 @@ pipelines and optional worker threads; SDL2 only creates the native window,
 delivers input, and presents the CPU framebuffer.
 
 ```text
-React -> react-reconciler -> Node-API mutations -> retained C++ tree
+React/Hermes bytecode -> react-reconciler -> N-API mutations -> retained C++ tree
       -> flex layout -> Blend2D BLImage -> SDL window surface
 ```
 
 ## Run the example
 
-Prerequisites are Bun 1.3+, CMake, a C++17 compiler, SDL2 development files,
-Node-API headers, and the sibling `../blend2d` source checkout. Blend2D is built
-statically into the native addon.
+Prerequisites are Node.js 18+ and npm for the build tools, CMake, a C++17
+compiler, SDL2 and Node-API development headers, and the sibling `../blend2d`
+source checkout. CMake fetches the pinned Hermes source on the first build;
+this initial native build is substantially longer than subsequent builds.
+Hermes and Blend2D are statically linked into the application host.
 
 ```bash
-bun install
-bun run example
+npm install
+npm run example
 ```
 
 Click **Increment** to exercise the full native event-to-React-state-to-native
@@ -27,7 +29,7 @@ mutation round trip.
 To run the large animated workload:
 
 ```bash
-bun run stress
+npm run stress
 ```
 
 It retains 20,000 rows, paints only the visible rows, changes 320 small elements
@@ -35,7 +37,7 @@ at 60 Hz, and prints renderer statistics once per second. Scroll the list with
 the mouse wheel. For a repeatable run without window-presentation overhead:
 
 ```bash
-bun run benchmark
+npm run benchmark
 ```
 
 The GPUix-inspired chat workload retains 5,000 messages and exercises images,
@@ -43,24 +45,28 @@ SVG icons, a changing canvas, buttons, badges, progress, Markdown, code, diffs,
 an editable composer, absolute positioning, and an anchored model picker:
 
 ```bash
-bun run chat
-bun run chat:benchmark
+npm run chat
+npm run chat:benchmark
 # choose a different transcript size
-bun examples/chat.tsx --messages=20000
+npm run chat -- --messages=20000
 ```
 
 Click **Model** to show the anchored overlay, type in the composer, use
 Ctrl+Enter to submit, and scroll the transcript with the mouse wheel.
 
-To create a standalone executable containing Bun, React, the application, the
-N-API addon, and static Blend2D:
+To create a standalone executable containing the lean Hermes VM, React,
+react-reconciler, the application bytecode, the native renderer, and static
+Blend2D:
 
 ```bash
-bun run compile:chat
+npm run compile:chat
 ./build/blendx-chat
 ```
 
 The executable still uses the target operating system's SDL2 and GUI libraries.
+On the development machine the packed chat is about 5.9 MB, including roughly
+235 KB of optimized Hermes bytecode. `tools/hermes-app.mjs` accepts any TS/TSX
+entry, so additional examples do not require a new native host.
 See [`PACKAGES.md`](PACKAGES.md) for the full dependency inventory.
 
 ## API
@@ -113,12 +119,13 @@ rejected by TypeScript instead of being silently treated like browser CSS.
 ## Architecture notes
 
 React queues mutations such as `createElement`, `appendChild`, `setStyle`, and
-`setText`, then sends one array through Node-API per commit. C++ retains those
-nodes, so unchanged UI does not cross Node-API again. A mutation records the old
+`setText`, then sends one array through N-API per commit. C++ retains those
+nodes, so unchanged UI does not cross N-API again. A mutation records the old
 damage, layout records the new damage, and overlapping rectangles are merged.
-Painting traverses only nodes intersecting each damage rectangle. The paced JS
-poll loop lets Node continue processing promises and timers while SDL events
-are pumped.
+Painting traverses only nodes intersecting each damage rectangle. The Hermes
+host supplies the timers, microtask draining, console, `performance.now`,
+arguments, and SIGINT handling needed by React and the examples while SDL
+events are pumped.
 
 `getStats()` separates `layoutTimeMs`, `paintTimeMs`, and `presentTimeMs`, and
 also reports dirty rectangles, painted pixels/nodes, mutations, and rolling
@@ -146,10 +153,11 @@ Headless mode excludes SDL/window-server presentation. In a forwarded X11
 session, presentation dominates and should be evaluated separately from CPU
 layout and Blend2D paint time.
 
-The 5,000-message chat benchmark retains 11,312 nodes. A representative
-compiled-Bun headless run mounted in 88 ms and then updated its animated
-canvas/progress at a 0.23 ms median renderer frame time while painting 50
-intersecting nodes and 7,480 pixels per update.
+The 5,000-message chat benchmark retains 11,312 nodes. A representative packed
+Hermes headless run mounted in 126 ms and then updated its animated
+canvas/progress at about a 0.43 ms median renderer frame time while painting 50
+intersecting nodes and 7,480 pixels per update. These figures include a new
+runtime migration and should be re-sampled before making cross-runtime claims.
 
 ## Adding another native element
 

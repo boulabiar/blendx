@@ -1,6 +1,6 @@
-import React, { createContext } from "react"
+import React from "react"
 import ReactReconciler from "react-reconciler"
-import { ConcurrentRoot, DefaultEventPriority } from "react-reconciler/constants.js"
+import ReconcilerConstants from "react-reconciler/constants.js"
 import { dispatchEvent, registerEvent, unregisterEvent } from "./event-registry.js"
 import { loadNativeRenderer } from "./native.js"
 import type {
@@ -26,6 +26,8 @@ export type {
 type Instance = { id: number; type: string; props: HostProps }
 type TextInstance = { id: number; text: string }
 type Container = { renderer: NativeRenderer }
+
+const { ConcurrentRoot, DefaultEventPriority } = ReconcilerConstants
 
 let nextElementId = 0
 let activeRenderer: NativeRenderer | null = null
@@ -215,7 +217,7 @@ const hostConfig = {
   resolveUpdatePriority(): number { return currentPriority || DefaultEventPriority },
   maySuspendCommit(): boolean { return false },
   NotPendingTransition: null,
-  HostTransitionContext: createContext(null),
+  HostTransitionContext: React.createContext(null),
   resetFormInstance(): void {},
   requestPostPaintCallback(): void {},
   trackSchedulerEvent(): void {},

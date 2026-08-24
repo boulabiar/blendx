@@ -1,5 +1,7 @@
-import React, { useState } from "react"
+import React from "react"
 import { render } from "../src/index.js"
+
+const { useState } = React
 
 function Counter() {
   const [count, setCount] = useState(0)

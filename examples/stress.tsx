@@ -1,5 +1,7 @@
-import React, { memo, useEffect, useState } from "react"
+import React from "react"
 import { render } from "../src/index.js"
+
+const { memo, useEffect, useState } = React
 
 const ROW_COUNT = 20_000
 const CELL_COUNT = 320

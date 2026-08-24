@@ -2033,4 +2033,8 @@ napi_value module_init(napi_env env, napi_value exports) {
 
 }  // namespace
 
+extern "C" napi_value blendx_module_init(napi_env env, napi_value exports) {
+  return module_init(env, exports);
+}
+
 NAPI_MODULE(NODE_GYP_MODULE_NAME, module_init)

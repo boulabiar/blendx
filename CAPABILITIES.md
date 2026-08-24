@@ -7,10 +7,10 @@ Latest 5,000-message headless chat benchmark:
 | Measurement | Result |
 |---|---:|
 | Retained native nodes | 11,312 |
-| Initial React/native mount | ~88 ms |
-| Steady renderer p50 | ~0.23 ms |
-| Steady renderer p95 | ~0.46 ms |
-| Worst sampled frame | ~3.4 ms |
+| Initial React/native mount | ~123–126 ms |
+| Steady renderer p50 | ~0.28–0.43 ms |
+| Steady renderer p95 | ~0.70–0.80 ms |
+| Worst sampled frame | ~2.9 ms |
 | Layout per update | ~0.14–0.16 ms |
 | Paint per update | ~0.10–0.34 ms |
 | Nodes painted per animation | 50 |
@@ -21,7 +21,7 @@ The transcript retains all 5,000 messages, but the virtual list only lays out
 and paints visible rows plus overdraw. Animated canvas/progress changes produce
 small dirty regions instead of repainting the entire window.
 
-These are compiled-Bun renderer-only headless numbers. In the forwarded X11 window test,
+These are packed-Hermes renderer-only headless numbers. In the forwarded X11 window test,
 SDL presentation took roughly 15–50 ms and dominated the frame; BlendX layout
 and painting remained below approximately 1 ms. On a local desktop,
 presentation should be considerably cheaper, but it needs benchmarking there.

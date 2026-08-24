@@ -1,6 +1,8 @@
-import React, { memo, useEffect, useMemo, useState } from "react"
+import React from "react"
 import { render } from "../src/index.js"
 import type { CanvasCommand } from "../src/types.js"
+
+const { memo, useEffect, useMemo, useState } = React
 
 const C = {
   canvas: "#17191f" as const,

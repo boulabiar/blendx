@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.4.0",
+  "packageManager": "npm@10.8.2",
   "engines": {
-    "bun": ">=1.3.0"
+    "node": ">=18.18.0"
   },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -24,25 +24,27 @@
     }
   },
   "scripts": {
-    "build:native": "cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j",
-    "build:types": "bun x tsc -p tsconfig.json",
-    "build": "bun run build:native && bun run build:types",
-    "example": "bun run build:native && bun examples/counter.tsx",
-    "stress": "bun run build:native && bun examples/stress.tsx",
-    "chat": "bun run build:native && bun examples/chat.tsx",
-    "chat:benchmark": "bun run build:native && bun examples/chat.tsx --headless",
-    "benchmark": "bun run build:native && bun examples/stress.tsx --headless",
-    "compile:chat": "bun run build:native && bun build --compile --minify examples/chat.tsx --outfile build/blendx-chat",
-    "test": "bun run build && bun test tests/*.test.mjs"
+    "build:native": "cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel && cmake --build build --target blendx_native blendx_hermes hermesc -j",
+    "build:types": "tsc -p tsconfig.json",
+    "build": "npm run build:native && npm run build:types",
+    "example": "npm run build:native && node tools/hermes-app.mjs run examples/counter.tsx --",
+    "stress": "npm run build:native && node tools/hermes-app.mjs run examples/stress.tsx --",
+    "chat": "npm run build:native && node tools/hermes-app.mjs run examples/chat.tsx --",
+    "chat:benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/chat.tsx -- --headless",
+    "benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/stress.tsx -- --headless",
+    "bytecode:chat": "node tools/hermes-app.mjs bytecode examples/chat.tsx",
+    "compile:chat": "npm run build:native && node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat",
+    "test": "npm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",
     "react-reconciler": "^0.33.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.0",
+    "@types/node": "^26.0.0",
     "@types/react": "^19.0.0",
     "@types/react-reconciler": "^0.28.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.0"
   }
 }
