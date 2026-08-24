@@ -36,6 +36,15 @@ const {
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
 } = await import("../dist/src/index.js")
 
 function pointer(native, kind, x, y) {
@@ -253,6 +262,57 @@ test("tabs, accordion, and collapsible implement pointer and keyboard state", as
     globalThis.__blendxNative.dispatchKey("Space")
     await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(collapsedOpen, false)
+  } finally {
+    app.stop()
+  }
+})
+
+test("dropdown and context menus support keyboard, selection, and right click", async () => {
+  let selected = ""
+  let pinned = false
+  let contextSelected = ""
+  let contextOpen = false
+  const h = React.createElement
+  const itemStyle = { width: 180, height: 32 }
+  const app = render(
+    h("div", { style: { width: "100%", height: "100%", position: "relative" } },
+      h("div", { style: { width: 160, height: 36, position: "absolute", left: 10, top: 10 } },
+        h(DropdownMenu, null,
+          h(DropdownMenuTrigger, { style: { width: 160, height: 36 } }, "Actions"),
+          h(DropdownMenuContent, { style: { width: 188, padding: 4, gap: 2, backgroundColor: "#111827" } },
+            h(DropdownMenuItem, { value: "alpha", onSelect: () => { selected = "alpha" }, style: itemStyle }, "Alpha"),
+            h(DropdownMenuItem, { value: "beta", onSelect: () => { selected = "beta" }, style: itemStyle }, "Beta"),
+            h(DropdownMenuCheckboxItem, { value: "pinned", checked: pinned, onCheckedChange: (value) => { pinned = value }, style: itemStyle }, "Pinned")))),
+      h(ContextMenu, { onOpenChange: (value) => { contextOpen = value } },
+        h(ContextMenuTrigger, { style: { width: 400, height: 160, position: "absolute", left: 10, top: 150, backgroundColor: "#202838" } }, "Right click"),
+        h(ContextMenuContent, { style: { width: 168, padding: 4, backgroundColor: "#111827" } },
+          h(ContextMenuItem, { value: "inspect", onSelect: () => { contextSelected = "inspect" }, style: { width: 160, height: 32 } }, "Inspect")))),
+    { width: 420, height: 320, headless: true },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  try {
+    click(globalThis.__blendxNative, 30, 25)
+    globalThis.__blendxNative.dispatchKey("ArrowDown")
+    globalThis.__blendxNative.dispatchKey("Enter")
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    assert.equal(selected, "beta")
+
+    click(globalThis.__blendxNative, 30, 25)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    click(globalThis.__blendxNative, 30, 126)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    assert.equal(pinned, true)
+
+    globalThis.__blendxNative.dispatchPointer("mouseDown", 400, 300, 3)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal(contextOpen, true)
+    globalThis.__blendxNative.dispatchPointer("mouseUp", 400, 300, 3)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(contextSelected, "")
+    assert.equal(contextOpen, true)
+    click(globalThis.__blendxNative, 300, 292)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    assert.equal(contextSelected, "inspect")
   } finally {
     app.stop()
   }

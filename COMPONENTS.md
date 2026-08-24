@@ -98,3 +98,14 @@ focus navigation. `Collapsible` provides the smaller standalone disclosure
 primitive.
 
 Run the combined workspace-settings example with `npm run disclosure`.
+
+## Menus
+
+`DropdownMenu` anchors to its trigger. `ContextMenu` opens at the native
+right-click position. Both support controlled or uncontrolled open state,
+disabled items, hover highlighting, arrows, Home, End, Enter/Space, Escape,
+single-character typeahead, outside dismissal, and focus restoration.
+
+Checkbox and radio menu items retain selection without closing by default.
+Labels and separators are shared structural primitives. Run the file-workspace
+example with `npm run menus`.

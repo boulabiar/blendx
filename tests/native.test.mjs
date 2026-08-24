@@ -112,6 +112,95 @@ test("flex growth overrides a zero-width basis with equal computed widths", () =
   native.shutdown()
 })
 
+test("zIndex controls pointer hit order as well as paint order", () => {
+  native.init({ width: 120, height: 80, headless: true })
+  let clicked = 0
+  native.setEventCallback((event) => { if (event.eventType === "click") clicked = event.elementId })
+  native.applyBatch([
+    ["create", 1, "div"],
+    ["style", 1, { width: "100%", height: "100%", position: "relative" }],
+    ["create", 2, "button"],
+    ["style", 2, { width: 80, height: 50, position: "absolute", left: 10, top: 10, zIndex: 10 }],
+    ["event", 2, "click", true],
+    ["append", 1, 2],
+    ["create", 3, "button"],
+    ["style", 3, { width: 80, height: 50, position: "absolute", left: 10, top: 10 }],
+    ["event", 3, "click", true],
+    ["append", 1, 3],
+    ["root", 1],
+  ])
+  native.commitMutations()
+  native.renderFrame()
+  native.dispatchPointer("click", 20, 20, 1)
+  assert.equal(clicked, 2)
+  native.shutdown()
+})
+
+test("click synthesis requires matching press and release targets", () => {
+  native.init({ width: 120, height: 80, headless: true })
+  let clicked = 0
+  native.setEventCallback((event) => { if (event.eventType === "click") clicked = event.elementId })
+  native.applyBatch([
+    ["create", 1, "div"],
+    ["style", 1, { width: "100%", height: "100%", position: "relative" }],
+    ["create", 2, "button"],
+    ["style", 2, { width: 80, height: 50, position: "absolute", left: 10, top: 10 }],
+    ["event", 2, "click", true],
+    ["append", 1, 2],
+    ["root", 1],
+  ])
+  native.commitMutations()
+  native.renderFrame()
+  native.dispatchPointer("mouseDown", 20, 20, 1)
+
+  native.applyBatch([
+    ["create", 3, "button"],
+    ["style", 3, { width: 80, height: 50, position: "absolute", left: 10, top: 10, zIndex: 5 }],
+    ["event", 3, "click", true],
+    ["append", 1, 3],
+  ])
+  native.commitMutations()
+  native.renderFrame()
+  native.dispatchPointer("mouseUp", 20, 20, 1)
+  assert.equal(clicked, 0)
+
+  native.dispatchPointer("mouseDown", 20, 20, 1)
+  native.dispatchPointer("mouseUp", 20, 20, 1)
+  assert.equal(clicked, 3)
+  native.shutdown()
+})
+
+test("visible overflow descendants receive pointer events outside their parent", () => {
+  native.init({ width: 160, height: 120, headless: true })
+  let clicked = 0
+  native.setEventCallback((event) => { if (event.eventType === "click") clicked = event.elementId })
+  native.applyBatch([
+    ["create", 1, "div"],
+    ["style", 1, { width: "100%", height: "100%", position: "relative" }],
+    ["create", 2, "div"],
+    ["style", 2, { width: 50, height: 30, position: "absolute", left: 10, top: 10, overflow: "visible" }],
+    ["create", 3, "button"],
+    ["style", 3, { width: 80, height: 30, position: "absolute", left: 0, top: 35 }],
+    ["event", 3, "click", true],
+    ["append", 2, 3],
+    ["append", 1, 2],
+    ["root", 1],
+  ])
+  native.commitMutations()
+  native.renderFrame()
+
+  native.dispatchPointer("click", 20, 55, 1)
+  assert.equal(clicked, 3)
+
+  clicked = 0
+  native.setStyle(2, { width: 50, height: 30, position: "absolute", left: 10, top: 10, overflow: "hidden" })
+  native.commitMutations()
+  native.renderFrame()
+  native.dispatchPointer("click", 20, 55, 1)
+  assert.equal(clicked, 0)
+  native.shutdown()
+})
+
 test("renders rich elements, structured props, and absolute overlays", () => {
   native.init({ width: 640, height: 480, headless: true })
   const elements = ["img", "svg", "canvas", "button", "separator", "badge", "progress", "markdown", "code", "diff", "textarea", "anchored"]

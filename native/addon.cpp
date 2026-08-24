@@ -294,6 +294,7 @@ class Renderer {
     focused_id_ = 0;
     hovered_id_ = 0;
     pointer_capture_id_ = 0;
+    pressed_click_id_ = 0;
     dirty_regions_.clear();
     dirty_nodes_.clear();
     scrolling_nodes_.clear();
@@ -341,6 +342,7 @@ class Renderer {
     if (focused_id_ == id) focused_id_ = 0;
     if (hovered_id_ == id) hovered_id_ = 0;
     if (pointer_capture_id_ == id) pointer_capture_id_ = 0;
+    if (pressed_click_id_ == id) pressed_click_id_ = 0;
     if (root_id_ == id) root_id_ = 0;
     dirty_ = true;
   }
@@ -469,14 +471,19 @@ class Renderer {
       return;
     }
     if (kind == "mouseDown") {
+      pressed_click_id_ = hit_test(root_id_, x, y, "click");
       pointer_capture_id_ = hit_test(root_id_, x, y, "mouseDown");
       emit_pointer(env, callback_ref, kind, x, y, button, 0.0, pointer_capture_id_);
       emit_outside(env, callback_ref, x, y);
       focus_element(env, callback_ref, hit_test_focusable(root_id_, x, y));
     } else if (kind == "mouseUp") {
       emit_pointer(env, callback_ref, kind, x, y, button, 0.0, pointer_capture_id_);
-      emit_pointer(env, callback_ref, "click", x, y, button);
+      const uint64_t released_click_id = hit_test(root_id_, x, y, "click");
+      if (pressed_click_id_ && released_click_id == pressed_click_id_) {
+        emit_pointer(env, callback_ref, "click", x, y, button, 0.0, pressed_click_id_);
+      }
       pointer_capture_id_ = 0;
+      pressed_click_id_ = 0;
     } else {
       emit_pointer(env, callback_ref, kind, x, y, button);
     }
@@ -558,6 +565,7 @@ class Renderer {
                    event.type == SDL_MOUSEBUTTONUP) {
           const char* kind = event.type == SDL_MOUSEBUTTONDOWN ? "mouseDown" : "mouseUp";
           if (event.type == SDL_MOUSEBUTTONDOWN) {
+            pressed_click_id_ = hit_test(root_id_, event.button.x, event.button.y, "click");
             pointer_capture_id_ = hit_test(root_id_, event.button.x, event.button.y, kind);
             emit_pointer(env, event_callback, kind, event.button.x, event.button.y,
                          event.button.button, 0.0, pointer_capture_id_);
@@ -567,9 +575,14 @@ class Renderer {
           } else {
             emit_pointer(env, event_callback, kind, event.button.x, event.button.y,
                          event.button.button, 0.0, pointer_capture_id_);
-            emit_pointer(env, event_callback, "click", event.button.x, event.button.y,
-                         event.button.button);
+            const uint64_t released_click_id = hit_test(
+                root_id_, event.button.x, event.button.y, "click");
+            if (pressed_click_id_ && released_click_id == pressed_click_id_) {
+              emit_pointer(env, event_callback, "click", event.button.x, event.button.y,
+                           event.button.button, 0.0, pressed_click_id_);
+            }
             pointer_capture_id_ = 0;
+            pressed_click_id_ = 0;
           }
         } else if (event.type == SDL_MOUSEMOTION) {
           update_hover(env, event_callback, event.motion.x, event.motion.y);
@@ -1561,65 +1574,92 @@ class Renderer {
     context.restore();
   }
 
+  template <typename Visitor>
+  uint64_t visit_children_front_to_back(const Node& parent, const Visitor& visitor) const {
+    const bool layered = std::any_of(parent.children.begin(), parent.children.end(), [this](uint64_t child) {
+      return nodes_.at(child).style.z_index != 0.0;
+    });
+    if (layered) {
+      std::vector<uint64_t> order = parent.children;
+      std::stable_sort(order.begin(), order.end(), [this](uint64_t a, uint64_t b) {
+        return nodes_.at(a).style.z_index < nodes_.at(b).style.z_index;
+      });
+      for (auto child = order.rbegin(); child != order.rend(); ++child) {
+        if (const uint64_t hit = visitor(*child)) return hit;
+      }
+    } else {
+      for (auto child = parent.children.rbegin(); child != parent.children.rend(); ++child) {
+        if (const uint64_t hit = visitor(*child)) return hit;
+      }
+    }
+    return 0;
+  }
+
   uint64_t hit_test(uint64_t id, double x, double y, const std::string& event) const {
     auto it = nodes_.find(id);
-    if (it == nodes_.end() || !it->second.style.visible || !it->second.box.contains(x, y)) return 0;
+    if (it == nodes_.end() || !it->second.style.visible) return 0;
+    const bool inside = it->second.box.contains(x, y);
+    if (!inside && it->second.style.overflow != Style::Overflow::kVisible) return 0;
     if (it->second.handler->kind == ElementHandler::Kind::kVirtualList) {
       for (size_t i = it->second.visible_end; i > it->second.visible_start; --i) {
         const uint64_t hit = hit_test(it->second.children[i - 1], x, y, event);
         if (hit) return hit;
       }
     } else {
-      for (auto child = it->second.children.rbegin(); child != it->second.children.rend(); ++child) {
-        const uint64_t hit = hit_test(*child, x, y, event);
-        if (hit) return hit;
-      }
+      if (const uint64_t hit = visit_children_front_to_back(it->second, [this, x, y, &event](uint64_t child) {
+            return hit_test(child, x, y, event);
+          })) return hit;
     }
-    return it->second.events.count(event) ? id : 0;
+    return inside && it->second.events.count(event) ? id : 0;
   }
 
   uint64_t find_scroll_target(uint64_t id, double x, double y) const {
     auto it = nodes_.find(id);
-    if (it == nodes_.end() || !it->second.box.contains(x, y)) return 0;
-    if (it->second.handler->kind == ElementHandler::Kind::kVirtualList) return id;
-    for (auto child = it->second.children.rbegin(); child != it->second.children.rend(); ++child) {
-      const uint64_t hit = find_scroll_target(*child, x, y);
-      if (hit) return hit;
-    }
-    return it->second.style.overflow == Style::Overflow::kScroll ? id : 0;
+    if (it == nodes_.end() || !it->second.style.visible) return 0;
+    const bool inside = it->second.box.contains(x, y);
+    if (!inside && it->second.style.overflow != Style::Overflow::kVisible) return 0;
+    if (inside && it->second.handler->kind == ElementHandler::Kind::kVirtualList) return id;
+    if (const uint64_t hit = visit_children_front_to_back(it->second, [this, x, y](uint64_t child) {
+          return find_scroll_target(child, x, y);
+        })) return hit;
+    return inside && it->second.style.overflow == Style::Overflow::kScroll ? id : 0;
   }
 
   uint64_t hit_test_input(uint64_t id, double x, double y) const {
     auto it = nodes_.find(id);
-    if (it == nodes_.end() || !it->second.style.visible || !it->second.box.contains(x, y)) return 0;
-    for (auto child = it->second.children.rbegin(); child != it->second.children.rend(); ++child) {
-      const uint64_t hit = hit_test_input(*child, x, y);
-      if (hit) return hit;
-    }
-    return it->second.handler->kind == ElementHandler::Kind::kInput ? id : 0;
+    if (it == nodes_.end() || !it->second.style.visible) return 0;
+    const bool inside = it->second.box.contains(x, y);
+    if (!inside && it->second.style.overflow != Style::Overflow::kVisible) return 0;
+    if (const uint64_t hit = visit_children_front_to_back(it->second, [this, x, y](uint64_t child) {
+          return hit_test_input(child, x, y);
+        })) return hit;
+    return inside && it->second.handler->kind == ElementHandler::Kind::kInput ? id : 0;
   }
 
   uint64_t hit_test_focusable(uint64_t id, double x, double y) const {
     auto it = nodes_.find(id);
-    if (it == nodes_.end() || !it->second.style.visible || !it->second.box.contains(x, y)) return 0;
-    for (auto child = it->second.children.rbegin(); child != it->second.children.rend(); ++child) {
-      const uint64_t hit = hit_test_focusable(*child, x, y);
-      if (hit) return hit;
-    }
+    if (it == nodes_.end() || !it->second.style.visible) return 0;
+    const bool inside = it->second.box.contains(x, y);
+    if (!inside && it->second.style.overflow != Style::Overflow::kVisible) return 0;
+    if (const uint64_t hit = visit_children_front_to_back(it->second, [this, x, y](uint64_t child) {
+          return hit_test_focusable(child, x, y);
+        })) return hit;
     const double default_tab = it->second.type == "button" ||
                                it->second.handler->kind == ElementHandler::Kind::kInput ? 0.0 : -1.0;
-    return !bool_prop(it->second, "disabled") &&
+    return inside && !bool_prop(it->second, "disabled") &&
                    number_prop(it->second, "tabIndex", default_tab) >= 0.0 ? id : 0;
   }
 
   uint64_t hit_test_hoverable(uint64_t id, double x, double y) const {
     auto it = nodes_.find(id);
-    if (it == nodes_.end() || !it->second.style.visible || !it->second.box.contains(x, y)) return 0;
-    for (auto child = it->second.children.rbegin(); child != it->second.children.rend(); ++child) {
-      const uint64_t hit = hit_test_hoverable(*child, x, y);
-      if (hit) return hit;
-    }
-    return it->second.events.count("mouseEnter") || it->second.events.count("mouseLeave") ? id : 0;
+    if (it == nodes_.end() || !it->second.style.visible) return 0;
+    const bool inside = it->second.box.contains(x, y);
+    if (!inside && it->second.style.overflow != Style::Overflow::kVisible) return 0;
+    if (const uint64_t hit = visit_children_front_to_back(it->second, [this, x, y](uint64_t child) {
+          return hit_test_hoverable(child, x, y);
+        })) return hit;
+    return inside && (it->second.events.count("mouseEnter") ||
+                      it->second.events.count("mouseLeave")) ? id : 0;
   }
 
   void update_hover(napi_env env, napi_ref callback_ref, double x, double y) {
@@ -1785,6 +1825,7 @@ class Renderer {
   uint64_t focused_id_ = 0;
   uint64_t hovered_id_ = 0;
   uint64_t pointer_capture_id_ = 0;
+  uint64_t pressed_click_id_ = 0;
   std::chrono::steady_clock::time_point last_poll_at_ = std::chrono::steady_clock::now();
 };
 
