@@ -24,7 +24,8 @@
     }
   },
   "scripts": {
-    "build:native": "cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel && cmake --build build --target blendx_native blendx_hermes hermesc -j",
+    "build:native": "cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel && cmake --build build --target blendx_hermes hermesc -j",
+    "build:test-addon": "cmake -S . -B build -DBLENDX_BUILD_NODE_ADDON=ON && cmake --build build --target blendx_native -j",
     "build:types": "tsc -p tsconfig.json",
     "build": "npm run build:native && npm run build:types",
     "example": "npm run build:native && node tools/hermes-app.mjs run examples/counter.tsx --",
@@ -34,7 +35,7 @@
     "benchmark": "npm run build:native && node tools/hermes-app.mjs run examples/stress.tsx -- --headless",
     "bytecode:chat": "node tools/hermes-app.mjs bytecode examples/chat.tsx",
     "compile:chat": "npm run build:native && node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat",
-    "test": "npm run build && node --test tests/*.test.mjs"
+    "test": "npm run build && npm run build:test-addon && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

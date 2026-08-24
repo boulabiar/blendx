@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    # A cold Hermes build is sizeable on GitHub's shared runners.
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev ninja-build python3-pygments python3-yaml
+
+      - run: npm ci
+
+      - name: Configure pinned native dependencies
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DBLENDX_BUILD_NODE_ADDON=ON
+
+      - name: Build Hermes host, compiler, and test addon
+        run: cmake --build build --target blendx_hermes hermesc blendx_native -j 4
+
+      - run: npm run build:types
+      - run: node --test tests/*.test.mjs
+
+      - name: Run the 5,000-message Hermes workload
+        run: node tools/hermes-app.mjs run examples/chat.tsx -- --headless
+
+      - name: Verify the packed executable
+        run: node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat && ./build/blendx-chat --headless

@@ -5,77 +5,111 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+include(FetchContent)
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
 
-set(BLEND2D_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../blend2d" CACHE PATH "Blend2D source directory")
+function(blendx_enable_warnings target)
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /W4)
+  else()
+    target_compile_options(${target} PRIVATE -Wall -Wextra)
+  endif()
+endfunction()
+
+# SDL2 is normally supplied by the operating system. Prefer its cross-platform
+# CMake package and fall back to pkg-config for Linux distributions that only
+# ship an SDL2.pc file.
+find_package(SDL2 CONFIG QUIET)
+if(TARGET SDL2::SDL2)
+  set(BLENDX_SDL_TARGET SDL2::SDL2)
+elseif(TARGET SDL2::SDL2-static)
+  set(BLENDX_SDL_TARGET SDL2::SDL2-static)
+else()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+  set(BLENDX_SDL_TARGET PkgConfig::SDL2)
+endif()
+
+set(BLEND2D_ROOT "" CACHE PATH "Use an existing Blend2D source checkout instead of downloading it")
 set(BLEND2D_STATIC ON CACHE BOOL "Build Blend2D statically" FORCE)
 set(BLEND2D_TEST OFF CACHE BOOL "Disable Blend2D tests" FORCE)
 set(BLEND2D_DEMOS OFF CACHE BOOL "Disable Blend2D demos" FORCE)
 set(BLEND2D_NO_INSTALL ON CACHE BOOL "Disable Blend2D installation" FORCE)
-add_subdirectory("${BLEND2D_ROOT}" "${CMAKE_BINARY_DIR}/blend2d" EXCLUDE_FROM_ALL)
+set(ASMJIT_ROOT "" CACHE PATH "Use an existing AsmJit source checkout instead of downloading it")
 
-find_path(NODE_INCLUDE_DIR node_api.h
-  PATHS
-    /usr/include/node
-    "$ENV{NVM_BIN}/../include/node"
-  REQUIRED)
+if(ASMJIT_ROOT)
+  set(ASMJIT_DIR "${ASMJIT_ROOT}" CACHE PATH "Location of AsmJit" FORCE)
+elseif(BLEND2D_ROOT AND EXISTS "${BLEND2D_ROOT}/3rdparty/asmjit/CMakeLists.txt")
+  # Let Blend2D discover its bundled development checkout.
+else()
+  FetchContent_Populate(asmjit
+    QUIET
+    URL https://codeload.github.com/asmjit/asmjit/tar.gz/f64c90818ff2ef87ec4f73f44d0a7e73fbff3229
+    URL_HASH SHA256=90d9a1e2b02f2f43d38930fa63a1fd9cded4801b2793a83441c42d6c1277ad87)
+  set(ASMJIT_DIR "${asmjit_SOURCE_DIR}" CACHE PATH "Location of AsmJit" FORCE)
+endif()
 
-add_library(blendx_native SHARED native/addon.cpp)
-set_target_properties(blendx_native PROPERTIES
-  PREFIX ""
-  SUFFIX ".node"
-  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/dist/native")
+if(BLEND2D_ROOT)
+  add_subdirectory("${BLEND2D_ROOT}" "${CMAKE_BINARY_DIR}/blend2d" EXCLUDE_FROM_ALL)
+else()
+  FetchContent_Declare(blend2d
+    URL https://codeload.github.com/blend2d/blend2d/tar.gz/6dbc2cefbc996379e07104e34519a440b49b15d7
+    URL_HASH SHA256=212a77ceebf8c37ad5ca7e7eac1757ce7aa911b88085b076a9ed24f6de6e36fa)
+  FetchContent_MakeAvailable(blend2d)
+endif()
 
-target_include_directories(blendx_native PRIVATE
-  "${NODE_INCLUDE_DIR}")
-target_link_libraries(blendx_native PRIVATE
+set(HERMES_ROOT "" CACHE PATH "Use an existing Hermes source checkout instead of downloading it")
+set(HERMES_ENABLE_TEST_SUITE OFF CACHE BOOL "" FORCE)
+set(HERMES_ENABLE_DEBUGGER OFF CACHE BOOL "" FORCE)
+set(HERMES_ENABLE_INTL OFF CACHE BOOL "" FORCE)
+set(HERMES_UNICODE_LITE ON CACHE BOOL "" FORCE)
+set(HERMES_ENABLE_CORE_EXTENSIONS OFF CACHE BOOL "" FORCE)
+set(HERMES_ENABLE_CONTRIB_EXTENSIONS OFF CACHE BOOL "" FORCE)
+set(HERMES_ENABLE_NAPI ON CACHE BOOL "" FORCE)
+set(HERMES_BUILD_LEAN_LIBHERMES ON CACHE BOOL "" FORCE)
+set(HERMESVM_ALLOW_JIT 0 CACHE STRING "" FORCE)
+
+if(HERMES_ROOT)
+  add_subdirectory("${HERMES_ROOT}" "${CMAKE_BINARY_DIR}/hermes" EXCLUDE_FROM_ALL)
+  set(BLENDX_HERMES_SOURCE_DIR "${HERMES_ROOT}")
+else()
+  FetchContent_Declare(hermes
+    URL https://codeload.github.com/facebook/hermes/tar.gz/e9edc8b52832df9be82163fc17d2459aa456b0e2
+    URL_HASH SHA256=d602adf0120fdc7b6f33b5c0c1c46e5f94ed740d34a52bd5823106a013cb5fce)
+  FetchContent_MakeAvailable(hermes)
+  set(BLENDX_HERMES_SOURCE_DIR "${hermes_SOURCE_DIR}")
+endif()
+
+add_executable(blendx_hermes
+  native/hermes_host.cpp
+  native/addon.cpp)
+target_compile_definitions(blendx_hermes PRIVATE BLENDX_USE_HERMES_NAPI=1)
+target_include_directories(blendx_hermes PRIVATE
+  "${BLENDX_HERMES_SOURCE_DIR}/API"
+  "${BLENDX_HERMES_SOURCE_DIR}/include"
+  "${BLENDX_HERMES_SOURCE_DIR}/public")
+target_link_libraries(blendx_hermes PRIVATE
+  hermesNapi
+  hermesvmlean_a
   blend2d::blend2d
-  PkgConfig::SDL2)
-target_compile_options(blendx_native PRIVATE -Wall -Wextra)
+  ${BLENDX_SDL_TARGET})
+blendx_enable_warnings(blendx_hermes)
+set_target_properties(blendx_hermes PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
-option(BLENDX_ENABLE_HERMES "Build the standalone Hermes runtime" ON)
-set(HERMES_ROOT "" CACHE PATH "Optional existing Hermes source checkout")
-
-if(BLENDX_ENABLE_HERMES)
-  set(HERMES_ENABLE_TEST_SUITE OFF CACHE BOOL "" FORCE)
-  set(HERMES_ENABLE_DEBUGGER OFF CACHE BOOL "" FORCE)
-  set(HERMES_ENABLE_INTL OFF CACHE BOOL "" FORCE)
-  set(HERMES_UNICODE_LITE ON CACHE BOOL "" FORCE)
-  set(HERMES_ENABLE_CORE_EXTENSIONS OFF CACHE BOOL "" FORCE)
-  set(HERMES_ENABLE_CONTRIB_EXTENSIONS OFF CACHE BOOL "" FORCE)
-  set(HERMES_ENABLE_NAPI ON CACHE BOOL "" FORCE)
-  set(HERMES_BUILD_LEAN_LIBHERMES ON CACHE BOOL "" FORCE)
-  set(HERMESVM_ALLOW_JIT 0 CACHE STRING "" FORCE)
-
-  if(HERMES_ROOT)
-    add_subdirectory("${HERMES_ROOT}" "${CMAKE_BINARY_DIR}/hermes" EXCLUDE_FROM_ALL)
-    set(BLENDX_HERMES_SOURCE_DIR "${HERMES_ROOT}")
-  else()
-    include(FetchContent)
-    FetchContent_Declare(hermes
-      GIT_REPOSITORY https://github.com/facebook/hermes.git
-      GIT_TAG e9edc8b52832df9be82163fc17d2459aa456b0e2
-      GIT_SHALLOW FALSE)
-    FetchContent_MakeAvailable(hermes)
-    set(BLENDX_HERMES_SOURCE_DIR "${hermes_SOURCE_DIR}")
-  endif()
-
-  add_executable(blendx_hermes
-    native/hermes_host.cpp
-    native/addon.cpp)
-  target_compile_definitions(blendx_hermes PRIVATE NODE_GYP_MODULE_NAME=blendx_native)
-  target_include_directories(blendx_hermes PRIVATE
-    "${NODE_INCLUDE_DIR}"
+option(BLENDX_BUILD_NODE_ADDON "Build the Node-compatible addon used by tests" OFF)
+if(BLENDX_BUILD_NODE_ADDON)
+  add_library(blendx_native SHARED native/addon.cpp)
+  target_include_directories(blendx_native PRIVATE
     "${BLENDX_HERMES_SOURCE_DIR}/API"
-    "${BLENDX_HERMES_SOURCE_DIR}/include"
-    "${BLENDX_HERMES_SOURCE_DIR}/public")
-  target_link_libraries(blendx_hermes PRIVATE
-    hermesNapi
-    hermesvmlean_a
-    blend2d::blend2d
-    PkgConfig::SDL2)
-  target_compile_options(blendx_hermes PRIVATE -Wall -Wextra)
-  set_target_properties(blendx_hermes PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    "${BLENDX_HERMES_SOURCE_DIR}/include")
+  target_link_libraries(blendx_native PRIVATE blend2d::blend2d ${BLENDX_SDL_TARGET})
+  blendx_enable_warnings(blendx_native)
+  set_target_properties(blendx_native PROPERTIES
+    PREFIX ""
+    SUFFIX ".node"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/dist/native"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/dist/native")
 endif()

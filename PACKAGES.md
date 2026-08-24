@@ -1,7 +1,7 @@
 # Packages and native dependencies
 
 BlendX uses a small JavaScript dependency set. Most rendering behavior is
-implemented directly in `native/addon.cpp` and the sibling Blend2D checkout.
+implemented directly in `native/addon.cpp` and statically linked Blend2D.
 
 ## Application runtime
 
@@ -32,10 +32,10 @@ contain Node.js or Bun and does not need `node_modules` at runtime.
 
 | Library | Source/version | Linkage | Purpose |
 |---|---|---|---|
-| Blend2D | sibling `../blend2d` checkout | Static, compiled into the Hermes host and test addon | SIMD/JIT rasterization, text shaping, paths, images, and the PRGB32 framebuffer |
-| AsmJit | Blend2D's vendored `3rdparty/asmjit` | Static through Blend2D | Runtime generation of architecture-specific Blend2D pipelines |
-| SDL2 | system 2.32.4 development package | Dynamic | Window creation, events, keyboard/text input, and framebuffer presentation |
-| N-API | Hermes implementation plus system `node_api.h` | Static runtime ABI; headers at build time | Stable C ABI between Hermes and the native renderer; also builds a Node-compatible test addon |
+| Blend2D | pinned commit `6dbc2cefbc996379e07104e34519a440b49b15d7` | Static, compiled into the Hermes host and test addon | SIMD/JIT rasterization, text shaping, paths, images, and the PRGB32 framebuffer |
+| AsmJit | pinned commit `f64c90818ff2ef87ec4f73f44d0a7e73fbff3229` | Static through Blend2D | Runtime generation of architecture-specific Blend2D pipelines |
+| SDL2 | system-provided development package | Dynamic | Window creation, events, keyboard/text input, and framebuffer presentation |
+| N-API | Hermes implementation and headers | Static runtime ABI | Stable C ABI between Hermes and the native renderer; the same headers build a Node-compatible test addon |
 
 Blend2D is built in-tree as `libblend2d.a`, eliminating a separate Blend2D
 runtime file and the development-machine RPATH.
@@ -44,10 +44,14 @@ runtime file and the development-machine RPATH.
 
 | Tool | Observed version | Purpose |
 |---|---:|---|
-| CMake | 3.31.6 | Configures BlendX, Hermes, static Blend2D, the host, and the test addon |
+| CMake | 3.31.6 observed; 3.20 minimum | Downloads verified source archives and configures Hermes, static Blend2D/AsmJit, the host, and test addon |
 | GCC/G++ | 15.2 | Compiles the C++17 host, renderer, Hermes, and Blend2D |
-| `pkg-config` | system package | Locates SDL2 and its compiler/linker flags |
+| `pkg-config` | system package, when SDL2 has no CMake config | Locates SDL2 and its compiler/linker flags |
 | Node.js/npm | 18.20.8 / 10.8.2 observed | Installs packages and runs TypeScript/bundling/test tools |
+
+Hermes, Blend2D, and AsmJit archives are pinned by commit and SHA-256 in
+`CMakeLists.txt`. `HERMES_ROOT`, `BLEND2D_ROOT`, and `ASMJIT_ROOT` are optional
+local-development overrides; normal builds and CI do not depend on them.
 
 ## Operating-system dependencies
 

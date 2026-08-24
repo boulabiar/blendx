@@ -1,4 +1,4 @@
-#include <node_api.h>
+#include <hermes/napi/node_api.h>
 
 #include <SDL.h>
 #include <blend2d/blend2d.h>
@@ -2037,4 +2037,6 @@ extern "C" napi_value blendx_module_init(napi_env env, napi_value exports) {
   return module_init(env, exports);
 }
 
-NAPI_MODULE(NODE_GYP_MODULE_NAME, module_init)
+#if !defined(BLENDX_USE_HERMES_NAPI)
+NAPI_MODULE(blendx_native, module_init)
+#endif

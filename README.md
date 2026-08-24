@@ -1,9 +1,9 @@
 # BlendX
 
 BlendX is a proof-of-concept native React renderer that draws its entire UI on
-the CPU with [Blend2D](../blend2d). It uses Blend2D's runtime-selected SIMD/JIT
-pipelines and optional worker threads; SDL2 only creates the native window,
-delivers input, and presents the CPU framebuffer.
+the CPU with [Blend2D](https://blend2d.com/). It uses Blend2D's runtime-selected
+SIMD/JIT pipelines and optional worker threads; SDL2 only creates the native
+window, delivers input, and presents the CPU framebuffer.
 
 ```text
 React/Hermes bytecode -> react-reconciler -> N-API mutations -> retained C++ tree
@@ -12,16 +12,36 @@ React/Hermes bytecode -> react-reconciler -> N-API mutations -> retained C++ tre
 
 ## Run the example
 
-Prerequisites are Node.js 18+ and npm for the build tools, CMake, a C++17
-compiler, SDL2 and Node-API development headers, and the sibling `../blend2d`
-source checkout. CMake fetches the pinned Hermes source on the first build;
-this initial native build is substantially longer than subsequent builds.
-Hermes and Blend2D are statically linked into the application host.
+Prerequisites are Node.js 18+ and npm for the build tools, CMake 3.20+, a C++17
+compiler, and SDL2 development files. CMake downloads checksummed, commit-pinned
+Hermes, Blend2D, and AsmJit source archives on the first build. No sibling
+checkout or `/tmp` dependency is required. This initial native build is
+substantially longer than subsequent incremental builds. Hermes, Blend2D, and
+AsmJit are statically linked into the application host.
 
 ```bash
 npm install
 npm run example
 ```
+
+On Debian/Ubuntu, the native prerequisites can be installed with:
+
+```bash
+sudo apt-get install build-essential cmake libsdl2-dev ninja-build
+```
+
+Developers who already have dependency checkouts can bypass downloads without
+changing the reproducible defaults:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel \
+  -DHERMES_ROOT=/path/to/hermes \
+  -DBLEND2D_ROOT=/path/to/blend2d
+cmake --build build --target blendx_hermes hermesc -j
+```
+
+`npm test` additionally enables and builds the Node-compatible addon used by
+the native protocol tests. It is not part of the shipped Hermes application.
 
 Click **Increment** to exercise the full native event-to-React-state-to-native
 mutation round trip.
@@ -68,6 +88,14 @@ On the development machine the packed chat is about 5.9 MB, including roughly
 235 KB of optimized Hermes bytecode. `tools/hermes-app.mjs` accepts any TS/TSX
 entry, so additional examples do not require a new native host.
 See [`PACKAGES.md`](PACKAGES.md) for the full dependency inventory.
+
+## Reproducibility and CI
+
+Native dependencies are pinned by commit and SHA-256 in `CMakeLists.txt`.
+GitHub Actions starts from a clean checkout, builds the runtime and test addon,
+runs the native/React tests, executes the 5,000-message headless chat under
+Hermes, and verifies the packed executable. Local source overrides are an
+optimization only and are never used by CI.
 
 ## API
 
