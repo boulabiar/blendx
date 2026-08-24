@@ -89,3 +89,36 @@ test("virtual-list lays out and paints only viewport rows", () => {
   assert.ok(stats.paintedNodes < 15, JSON.stringify(stats))
   native.shutdown()
 })
+
+test("renders rich elements, structured props, and absolute overlays", () => {
+  native.init({ width: 640, height: 480, headless: true })
+  const elements = ["img", "svg", "canvas", "button", "separator", "badge", "progress", "markdown", "code", "diff", "textarea", "anchored"]
+  const batch = [
+    ["create", 1, "div"],
+    ["style", 1, { width: "100%", height: "100%", padding: 8, gap: 4, position: "relative" }],
+  ]
+  elements.forEach((type, index) => {
+    const id = index + 2
+    batch.push(["create", id, type])
+    batch.push(["style", id, { width: 180, height: type === "separator" ? 1 : 28, color: "#ffffff", backgroundColor: "#202838" }])
+    batch.push(["append", 1, id])
+  })
+  batch.push(["prop", 3, "src", '<svg viewBox="0 0 24 24" fill="none" stroke="#000"><path d="M2 12h20"/></svg>'])
+  batch.push(["prop", 4, "commands", [{ kind: "fillRect", x: 2, y: 2, width: 20, height: 10, color: "#ff0000", radius: 2 }]])
+  batch.push(["prop", 8, "value", 42], ["prop", 8, "max", 100])
+  batch.push(["prop", 9, "source", "# Markdown\n- retained"])
+  batch.push(["prop", 10, "code", "const x = 1"], ["prop", 10, "showLineNumbers", true])
+  batch.push(["prop", 11, "patch", "-old\n+new"])
+  batch.push(["prop", 12, "value", "editable"], ["prop", 12, "placeholder", "type"])
+  batch.push(["style", 13, { width: 120, height: 40, position: "absolute" }])
+  batch.push(["prop", 13, "position", { x: 300, y: 40 }], ["prop", 13, "side", "bottom"])
+  batch.push(["root", 1])
+  native.applyBatch(batch)
+  native.commitMutations()
+  native.renderFrame()
+  const stats = native.getStats()
+  assert.equal(stats.nodeCount, 13)
+  assert.ok(stats.paintedNodes >= 10)
+  assert.ok(stats.renderTimeMs >= 0)
+  native.shutdown()
+})

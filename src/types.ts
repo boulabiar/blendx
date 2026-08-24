@@ -14,22 +14,70 @@ export interface Style {
   padding?: number
   paddingHorizontal?: number
   paddingVertical?: number
+  paddingLeft?: number
+  paddingRight?: number
+  paddingTop?: number
+  paddingBottom?: number
+  marginLeft?: number
+  marginRight?: number
+  marginTop?: number
+  marginBottom?: number
   backgroundColor?: Color
   color?: Color
   fontSize?: number
+  lineHeight?: number
+  fontWeight?: number
   borderRadius?: number
+  borderWidth?: number
+  borderColor?: Color
+  opacity?: number
   visibility?: "visible" | "hidden"
   overflow?: "visible" | "hidden" | "scroll"
+  overflowY?: "visible" | "hidden" | "scroll"
+  position?: "relative" | "absolute" | "fixed"
+  left?: number
+  right?: number
+  top?: number
+  bottom?: number
+  maxWidth?: Length
+  maxHeight?: Length
+  flexShrink?: number
+  flexWrap?: "nowrap" | "wrap"
+  alignItems?: "start" | "center" | "end" | "flex-start" | "flex-end" | "stretch"
+  justifyContent?: "start" | "center" | "end" | "flex-start" | "flex-end" | "spaceBetween" | "space-between"
+  cursor?: "default" | "pointer" | "text"
+  whiteSpace?: "normal" | "nowrap" | "pre" | "preWrap"
+  textOverflow?: "clip" | "ellipsis"
 }
 
 export interface BlendxEvent {
   elementId: number
-  eventType: "click" | "mouseDown" | "mouseUp" | "scroll"
+  eventType:
+    | "click"
+    | "mouseDown"
+    | "mouseUp"
+    | "scroll"
+    | "change"
+    | "submit"
+    | "keyDown"
+    | "focus"
+    | "blur"
   x: number
   y: number
   button: number
   deltaY: number
+  value?: string
+  key?: string
 }
+
+export type CanvasCommand =
+  | { kind: "fillRect"; x: number; y: number; width: number; height: number; color: Color; radius?: number }
+  | { kind: "strokeRect"; x: number; y: number; width: number; height: number; color: Color; widthPx?: number; radius?: number }
+  | { kind: "line"; x1: number; y1: number; x2: number; y2: number; color: Color; widthPx?: number }
+  | { kind: "circle"; x: number; y: number; radius: number; color: Color; fill?: boolean; widthPx?: number }
+  | { kind: "text"; x: number; y: number; text: string; color: Color; fontSize?: number }
+
+export interface AnchorPosition { x: number; y: number }
 
 export interface HostProps {
   key?: Key | null
@@ -39,10 +87,40 @@ export interface HostProps {
   onMouseDown?: (event: BlendxEvent) => void
   onMouseUp?: (event: BlendxEvent) => void
   onScroll?: (event: BlendxEvent) => void
+  onChange?: (event: BlendxEvent) => void
+  onSubmit?: (event: BlendxEvent) => void
+  onKeyDown?: (event: BlendxEvent) => void
+  onFocus?: (event: BlendxEvent) => void
+  onBlur?: (event: BlendxEvent) => void
   /** Uniform row height used by `virtual-list`. */
   itemHeight?: number
   /** Extra rows painted above and below the viewport. */
   overdraw?: number
+  estimatedItemHeight?: number
+  src?: string
+  alt?: string
+  objectFit?: "fill" | "contain" | "cover" | "scaleDown" | "none"
+  commands?: CanvasCommand[]
+  source?: string
+  code?: string
+  language?: string
+  showLineNumbers?: boolean
+  showHeader?: boolean
+  patch?: string
+  wordDiff?: boolean
+  value?: string | number
+  max?: number
+  placeholder?: string
+  readOnly?: boolean
+  minRows?: number
+  maxRows?: number
+  autoFocus?: boolean
+  position?: AnchorPosition
+  side?: "top" | "right" | "bottom" | "left"
+  align?: "start" | "center" | "end"
+  anchor?: "topLeft" | "topCenter" | "topRight" | "rightCenter" | "bottomRight" | "bottomCenter" | "bottomLeft" | "leftCenter"
+  offset?: AnchorPosition
+  anchorGap?: number
 }
 
 export interface WindowOptions {
@@ -81,7 +159,7 @@ export type NativeMutation =
   | ["style", number, Style]
   | ["text", number, string]
   | ["event", number, string, boolean]
-  | ["prop", number, string, string | number | boolean | null]
+  | ["prop", number, string, unknown]
   | ["root", number]
 
 export interface NativeRenderer {
@@ -94,7 +172,7 @@ export interface NativeRenderer {
   insertBefore(parentId: number, childId: number, beforeId: number): void
   setStyle(id: number, style: Style): void
   setText(id: number, text: string): void
-  setCustomProp(id: number, name: string, value: string | number | boolean | null): void
+  setCustomProp(id: number, name: string, value: unknown): void
   setEventListener(id: number, eventType: string, enabled: boolean): void
   setRoot(id: number): void
   commitMutations(): void

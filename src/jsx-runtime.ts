@@ -16,5 +16,18 @@ export namespace JSX {
     div: HostProps
     text: HostProps
     "virtual-list": HostProps
+    img: HostProps
+    svg: HostProps
+    canvas: HostProps
+    button: HostProps
+    separator: HostProps
+    badge: HostProps
+    progress: HostProps
+    anchored: HostProps
+    markdown: HostProps
+    code: HostProps
+    diff: HostProps
+    input: HostProps
+    textarea: HostProps
   }
 }

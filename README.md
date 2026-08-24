@@ -37,6 +37,20 @@ the mouse wheel. For a repeatable run without window-presentation overhead:
 npm run benchmark
 ```
 
+The GPUix-inspired chat workload retains 5,000 messages and exercises images,
+SVG icons, a changing canvas, buttons, badges, progress, Markdown, code, diffs,
+an editable composer, absolute positioning, and an anchored model picker:
+
+```bash
+npm run chat
+npm run chat:benchmark
+# choose a different transcript size
+npm run build && node dist/examples/chat.js --messages=20000
+```
+
+Click **Model** to show the anchored overlay, type in the composer, use
+Ctrl+Enter to submit, and scroll the transcript with the mouse wheel.
+
 ## API
 
 ```tsx
@@ -56,13 +70,21 @@ Setting `threads` to zero uses Blend2D's synchronous context. A positive value
 uses an asynchronous context; values above one request additional workers from
 Blend2D's shared thread pool.
 
-## Current MVP surface
+## Current surface
 
-- Host elements: `div`, `text`
-- Layout: row/column flex subset, `flexGrow`, gap, uniform/axis padding, fixed
-  and percentage width/height
-- Paint: solid backgrounds, text, rounded rectangles, visibility
-- Input: mouse down, mouse up, click, wheel scrolling, deepest-node hit testing
+- Host elements: `div`, `text`, `button`, `badge`, `separator`, `progress`,
+  `img`, `svg`, `canvas`, `markdown`, `code`, `diff`, `input`, `textarea`,
+  `anchored`, and `virtual-list`
+- Layout: row/column flex subset, grow/shrink, alignment, justification, gap,
+  per-edge padding/margins, min/max/fixed/percentage dimensions, scrolling,
+  clipping, and absolute/fixed positioning
+- Paint: colors, opacity, borders, rounded rectangles, raster image fit modes,
+  a useful SVG path/shape subset, retained canvas commands, Markdown blocks,
+  line-numbered code, colored diffs, badges, separators, and progress bars
+- Input: mouse down/up/click, wheel scrolling, deepest-node hit testing,
+  keyboard focus, UTF-8 text input, Backspace, Enter, change/submit/key events
+- Overlays: out-of-flow anchored nodes with top/right/bottom/left placement,
+  start/center/end alignment, gaps, and x/y offsets
 - Window: resize and close handling through SDL2
 - Renderer: PRGB32 Blend2D framebuffer, coalesced damage rectangles, partial
   framebuffer presentation, runtime-selected Blend2D SIMD/JIT pipelines
@@ -73,7 +95,7 @@ Blend2D's shared thread pool.
 - Extensibility: native element registry maps host names to behavior handlers
 - Tests: a headless renderer mode that still executes Blend2D
 
-The style type is exported from `src/types.ts`. Unsupported properties are
+The style and canvas-command types are exported from `src/types.ts`. Unsupported properties are
 rejected by TypeScript instead of being silently treated like browser CSS.
 
 ## Architecture notes
@@ -93,7 +115,7 @@ p50/p95/maximum frame times.
 Blend2D chooses its SIMD implementation internally. BlendX deliberately does
 not contain handwritten intrinsics.
 
-## Current stress result
+## Current stress results
 
 On the development machine, the headless 1000×760 workload retained 40,325
 native nodes and produced the following representative result:
@@ -112,14 +134,22 @@ Headless mode excludes SDL/window-server presentation. In a forwarded X11
 session, presentation dominates and should be evaluated separately from CPU
 layout and Blend2D paint time.
 
+The 5,000-message chat benchmark retains 11,312 nodes. A representative
+headless run mounted in 168 ms and then updated its animated canvas/progress at
+a 0.30 ms median renderer frame time while painting 50 intersecting nodes and
+7,480 pixels per update.
+
 ## Adding another native element
 
 Register its name and handler kind in `ElementRegistry`, add its custom props to
 the React host types and `syncCustomProps()`, then implement its measurement,
-paint and event behavior. The protocol already transports custom numeric props;
-it can be extended with cached strings or binary resources for elements such as
-`img`, `svg`, `code`, and `markdown`.
+paint and event behavior. The protocol transports numbers, booleans, strings,
+points, and retained canvas command arrays. Images and SVG file contents are
+cached on first use.
 
 This is not yet a complete desktop toolkit. The next substantial pieces are a
-full flexbox implementation, font fallback and bidi, keyboard focus/input,
-images, richer custom-prop values, and accessibility.
+full flexbox implementation, text shaping across fallback fonts and bidi,
+selection and clipboard support, IME composition, accessible platform nodes,
+and production-grade CommonMark/syntax highlighting. The current Markdown and
+code painters intentionally cover the chat/demo subset rather than replacing a
+complete parser.

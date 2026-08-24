@@ -25,6 +25,8 @@
     "build": "npm run build:native && npm run build:ts",
     "example": "npm run build && node dist/examples/counter.js",
     "stress": "npm run build && node dist/examples/stress.js",
+    "chat": "npm run build && node dist/examples/chat.js",
+    "chat:benchmark": "npm run build && node dist/examples/chat.js --headless",
     "benchmark": "npm run build && node dist/examples/stress.js --headless",
     "test": "node --test tests/*.test.mjs"
   },

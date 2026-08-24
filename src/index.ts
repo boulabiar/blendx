@@ -15,6 +15,8 @@ import type {
 export type {
   BlendxEvent,
   BlendxRoot,
+  CanvasCommand,
+  AnchorPosition,
   HostProps,
   NativeStats,
   Style,
@@ -39,6 +41,11 @@ const eventProps = [
   ["onMouseDown", "mouseDown"],
   ["onMouseUp", "mouseUp"],
   ["onScroll", "scroll"],
+  ["onChange", "change"],
+  ["onSubmit", "submit"],
+  ["onKeyDown", "keyDown"],
+  ["onFocus", "focus"],
+  ["onBlur", "blur"],
 ] as const
 
 function createBatchedRenderer(raw: NativeRenderer): NativeRenderer {
@@ -106,7 +113,13 @@ function stylesEqual(a: HostProps["style"], b: HostProps["style"]): boolean {
 }
 
 function syncCustomProps(id: number, oldProps: HostProps | null, props: HostProps): void {
-  for (const name of ["itemHeight", "overdraw"] as const) {
+  for (const name of [
+    "itemHeight", "overdraw", "estimatedItemHeight", "src", "alt", "objectFit",
+    "commands", "source", "code", "language", "showLineNumbers", "showHeader",
+    "patch", "wordDiff", "value", "max", "placeholder", "readOnly", "minRows",
+    "maxRows", "autoFocus", "position", "side", "align", "anchor", "offset",
+    "anchorGap",
+  ] as const) {
     if (props[name] !== oldProps?.[name]) native().setCustomProp(id, name, props[name] ?? null)
   }
 }
