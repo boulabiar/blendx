@@ -27,6 +27,8 @@ namespace {
 
 using namespace blendx;
 
+constexpr auto kRenderFrameInterval = std::chrono::microseconds(8333);
+
 class ElementRegistry {
  public:
   ElementRegistry() {
@@ -74,6 +76,7 @@ class Renderer {
     threads_ = threads;
     headless_ = headless;
     running_ = true;
+    max_frame_rate_ = 120.0;
 
     BLResult font_result = BL_ERROR_INVALID_DATA;
     if (!font_path.empty()) {
@@ -115,6 +118,7 @@ class Renderer {
     yoga_layout_dirty_ = true;
     special_layout_dirty_ = true;
     last_poll_at_ = std::chrono::steady_clock::now();
+    next_render_frame_ = std::chrono::steady_clock::time_point::min();
     return true;
   }
 
@@ -142,6 +146,7 @@ class Renderer {
     frame_count_ = 0;
     render_time_ms_ = 0.0;
     frame_samples_.clear();
+    next_render_frame_ = std::chrono::steady_clock::time_point::min();
     focused_id_ = 0;
     hovered_id_ = 0;
     pointer_capture_id_ = 0;
@@ -186,7 +191,12 @@ class Renderer {
     nodes_[id] = std::move(node);
     configure_yoga_node(nodes_.at(id));
     if (nodes_.at(id).handler->kind == ElementHandler::Kind::kVirtualList) {
+      ensure_scroll_state(nodes_.at(id));
+      ensure_virtual_list_state(nodes_.at(id));
       virtual_list_ids_.insert(id);
+    }
+    if (nodes_.at(id).handler->kind == ElementHandler::Kind::kInput) {
+      ensure_input_state(nodes_.at(id));
     }
     if (nodes_.at(id).handler->kind == ElementHandler::Kind::kAnchored) {
       overlay_ids_.insert(id);
@@ -297,6 +307,7 @@ class Renderer {
     const bool was_detached = target->handler->kind == ElementHandler::Kind::kAnchored ||
                               target->style.position == Style::Position::kFixed;
     target->style = std::move(style);
+    if (target->style.overflow == Style::Overflow::kScroll) ensure_scroll_state(*target);
     const bool is_detached = target->handler->kind == ElementHandler::Kind::kAnchored ||
                              target->style.position == Style::Position::kFixed;
     if (is_detached) overlay_ids_.insert(id);
@@ -325,35 +336,43 @@ class Renderer {
     invalidate_layout(target->parent ? target->parent : id);
   }
   void set_custom_prop(uint64_t id, const std::string& name, PropValue value) {
+    const CustomPropertyDefinition* definition = find_custom_property(name);
+    if (definition) set_custom_prop(id, *definition, std::move(value));
+  }
+  void set_custom_prop(uint64_t id, uint32_t property_id, PropValue value) {
+    if (property_id >= kCustomProperties.size()) return;
+    set_custom_prop(id, kCustomProperties[property_id], std::move(value));
+  }
+  void set_custom_prop(uint64_t id, const CustomPropertyDefinition& definition,
+                       PropValue value) {
     Node* target = node(id);
     if (!target) return;
-    const bool affects_measure = name == "itemHeight" || name == "estimatedItemHeight" ||
-                                 name == "src" || name == "source" || name == "code" ||
-                                 name == "patch" || name == "minRows";
-    const bool affects_special = name == "overdraw" || name == "alignment" ||
-                                 name == "followTail" || name == "position" ||
-                                 name == "side" || name == "align" || name == "anchor" ||
-                                 name == "offset" || name == "anchorGap" || name == "anchorId";
+    const std::string_view name = definition.name;
+    const bool affects_measure = definition.invalidation == CustomPropertyInvalidation::kMeasure;
+    const bool affects_special = definition.invalidation == CustomPropertyInvalidation::kSpecial;
     if (name == "itemHeight" || name == "estimatedItemHeight") {
+      auto& list = ensure_virtual_list_state(*target);
       if (const double* number = std::get_if<double>(&value)) {
-        target->item_height = std::max(1.0, *number);
+        list.item_height = std::max(1.0, *number);
       } else {
-        target->item_height = 28.0;
+        list.item_height = 28.0;
       }
     } else if (name == "overdraw") {
+      auto& list = ensure_virtual_list_state(*target);
       if (const double* number = std::get_if<double>(&value)) {
-        target->overdraw = static_cast<uint32_t>(std::max(0.0, *number));
+        list.overdraw = static_cast<uint32_t>(std::max(0.0, *number));
       } else {
-        target->overdraw = 2u;
+        list.overdraw = 2u;
       }
     } else if (name == "value") {
       if (const std::string* text = std::get_if<std::string>(&value)) {
-        const std::string previous = string_prop(*target, "value");
-        if (previous.empty() && target->selection_start == 0 && target->selection_end == 0) {
-          target->selection_start = target->selection_end = text->size();
+        auto& input = ensure_input_state(*target);
+        const std::string previous = string_prop(*target, CustomPropertyId::kValue);
+        if (previous.empty() && input.selection_start == 0 && input.selection_end == 0) {
+          input.selection_start = input.selection_end = text->size();
         } else {
-          target->selection_start = std::min(target->selection_start, text->size());
-          target->selection_end = std::min(target->selection_end, text->size());
+          input.selection_start = std::min(input.selection_start, text->size());
+          input.selection_end = std::min(input.selection_end, text->size());
         }
       }
     } else if (name == "autoFocus" && std::get_if<bool>(&value) && std::get<bool>(value)) {
@@ -368,11 +387,11 @@ class Renderer {
         animation.id = id;
         animation.opacity = name == "animateOpacity";
         animation.from = animation.opacity ? target->style.opacity
-                                           : number_prop(*target, "value");
+                                           : number_prop(*target, CustomPropertyId::kValue);
         animation.to = *destination;
-        animation.duration_ms = std::max(1.0, number_prop(*target, "animationDurationMs", 1000.0));
-        animation.loop = bool_prop(*target, "animationLoop");
-        animation.alternate = bool_prop(*target, "animationAlternate");
+        animation.duration_ms = std::max(1.0, number_prop(*target, CustomPropertyId::kAnimationDurationMs, 1000.0));
+        animation.loop = bool_prop(*target, CustomPropertyId::kAnimationLoop);
+        animation.alternate = bool_prop(*target, CustomPropertyId::kAnimationAlternate);
         animation.started = std::chrono::steady_clock::now();
         if (animations_.empty()) next_animation_frame_ = animation.started;
         animations_.insert_or_assign(id, animation);
@@ -381,9 +400,9 @@ class Renderer {
       }
     }
     if (std::holds_alternative<std::monostate>(value)) {
-      target->props.erase(name);
+      target->props.erase(definition.id);
     } else {
-      target->props.insert_or_assign(name, std::move(value));
+      target->props.insert_or_assign(definition.id, std::move(value));
     }
     if (affects_measure && !layout_container_for(id)) {
       mark_yoga_measure_dirty(*target);
@@ -403,8 +422,8 @@ class Renderer {
   void focus_element(napi_env env, napi_ref callback_ref, uint64_t id,
                      bool programmatic = false) {
     Node* target = node(id);
-    if (id && (!target || bool_prop(*target, "disabled") ||
-               (!programmatic && number_prop(*target, "tabIndex", target->type == "button" ||
+    if (id && (!target || bool_prop(*target, CustomPropertyId::kDisabled) ||
+               (!programmatic && number_prop(*target, CustomPropertyId::kTabIndex, target->type == "button" ||
                                                    target->handler->kind == ElementHandler::Kind::kInput ? 0.0 : -1.0) < 0.0))) {
       return;
     }
@@ -458,8 +477,10 @@ class Renderer {
       }
       pressed_click_id_ = hit_test(root_id_, x, y, "click");
       pointer_capture_id_ = hit_test(root_id_, x, y, "mouseDown");
-      emit_pointer(env, callback_ref, kind, x, y, button, 0.0, pointer_capture_id_);
+      // Dismiss layers that existed when the event began. A handler may mount a
+      // new context menu, which must not receive the same event as an outside click.
       emit_outside(env, callback_ref, x, y);
+      emit_pointer(env, callback_ref, kind, x, y, button, 0.0, pointer_capture_id_);
       const uint64_t focus_id = hit_test_focusable(root_id_, x, y);
       focus_element(env, callback_ref, focus_id);
       position_input_caret(focus_id, x, y);
@@ -494,7 +515,7 @@ class Renderer {
     if (key == "Enter" || key == "Space") {
       Node* target = node(target_id);
       if (target && target->handler->kind != ElementHandler::Kind::kInput &&
-          !bool_prop(*target, "disabled")) {
+          !bool_prop(*target, CustomPropertyId::kDisabled)) {
         emit_to(env, callback_ref, focused_id_, "click");
       }
     }
@@ -502,16 +523,17 @@ class Renderer {
   void scroll_to_item(uint64_t id, size_t index) {
     Node* target = node(id);
     if (!target || target->handler->kind != ElementHandler::Kind::kVirtualList) return;
-    const double max_scroll = std::max(0.0, target->content_height - target->box.h);
-    target->scroll_target_y = std::clamp(index * target->item_height, 0.0, max_scroll);
+    const double max_scroll = std::max(0.0, target->scroll->content_height - target->box.h);
+    target->scroll->target_y = std::clamp(
+        index * ensure_virtual_list_state(*target).item_height, 0.0, max_scroll);
     scrolling_nodes_.insert(id);
   }
   void scroll_to_offset(uint64_t id, double offset) {
     Node* target = node(id);
     if (!target) return;
-    const double max_scroll = std::max(0.0, target->content_height - target->box.h);
-    target->scroll_y = std::clamp(offset, 0.0, max_scroll);
-    target->scroll_target_y = target->scroll_y;
+    const double max_scroll = std::max(0.0, target->scroll->content_height - target->box.h);
+    target->scroll->offset_y = std::clamp(offset, 0.0, max_scroll);
+    target->scroll->target_y = target->scroll->offset_y;
     scrolling_nodes_.erase(id);
     invalidate_scroll(id);
   }
@@ -570,10 +592,21 @@ class Renderer {
   }
   uint32_t threads() const { return threads_; }
   size_t active_animation_count() const { return animations_.size(); }
+  void set_frame_rate_limit(double frames_per_second) {
+    max_frame_rate_ = frames_per_second <= 0.0
+        ? 0.0 : std::clamp(frames_per_second, 1.0, 1000.0);
+    next_render_frame_ = std::chrono::steady_clock::time_point::min();
+  }
   double next_frame_delay() const {
-    if (animations_.empty()) return 1000.0;
+    auto next = std::chrono::steady_clock::time_point::max();
+    if (dirty_ || !scrolling_nodes_.empty()) {
+      next = std::min(next, max_frame_rate_ > 0.0
+                                ? next_render_frame_ : std::chrono::steady_clock::now());
+    }
+    if (!animations_.empty()) next = std::min(next, next_animation_frame_);
+    if (next == std::chrono::steady_clock::time_point::max()) return 1000.0;
     return std::max(1.0, std::chrono::duration<double, std::milli>(
-                             next_animation_frame_ - std::chrono::steady_clock::now()).count());
+                             next - std::chrono::steady_clock::now()).count());
   }
 
   bool poll(napi_env env, napi_ref event_callback) {
@@ -618,9 +651,9 @@ class Renderer {
             }
             pressed_click_id_ = hit_test(root_id_, event.button.x, event.button.y, "click");
             pointer_capture_id_ = hit_test(root_id_, event.button.x, event.button.y, kind);
+            emit_outside(env, event_callback, event.button.x, event.button.y);
             emit_pointer(env, event_callback, kind, event.button.x, event.button.y,
                          event.button.button, 0.0, pointer_capture_id_);
-            emit_outside(env, event_callback, event.button.x, event.button.y);
             const uint64_t focus_id = hit_test_focusable(root_id_, event.button.x, event.button.y);
             focus_element(env, event_callback, focus_id);
             position_input_caret(focus_id, event.button.x, event.button.y);
@@ -673,22 +706,22 @@ class Renderer {
           const double delta_y = -wheel_y * 120.0;
           const uint64_t target_id = find_scroll_target(root_id_, mouse_x, mouse_y);
           if (Node* target = node(target_id)) {
-            target->scroll_target_y = std::clamp(
-                target->scroll_target_y + delta_y, 0.0,
-                std::max(0.0, target->content_height - target->box.h));
+            target->scroll->target_y = std::clamp(
+                target->scroll->target_y + delta_y, 0.0,
+                std::max(0.0, target->scroll->content_height - target->box.h));
             scrolling_nodes_.insert(target_id);
             emit_scroll(env, event_callback, target_id, delta_y);
           }
         } else if (event.type == SDL_TEXTINPUT && focused_id_) {
-          if (Node* target = node(focused_id_); target && !bool_prop(*target, "readOnly")) {
+          if (Node* target = node(focused_id_); target && !bool_prop(*target, CustomPropertyId::kReadOnly)) {
             const std::string value = replace_input_selection(*target, event.text.text);
-            target->composition.clear();
+            target->input->composition.clear();
             invalidate_paint(focused_id_);
             emit_to(env, event_callback, focused_id_, "change", value);
           }
         } else if (event.type == SDL_TEXTEDITING && focused_id_) {
           if (Node* target = node(focused_id_); target && target->handler->kind == ElementHandler::Kind::kInput) {
-            target->composition = event.edit.text;
+            target->input->composition = event.edit.text;
             invalidate_paint(focused_id_);
           }
         } else if (event.type == SDL_KEYDOWN && selected_text_id_ &&
@@ -725,28 +758,28 @@ class Renderer {
           }
           if ((code == SDLK_RETURN || code == SDLK_SPACE) &&
               target->handler->kind != ElementHandler::Kind::kInput &&
-              !bool_prop(*target, "disabled")) {
+              !bool_prop(*target, CustomPropertyId::kDisabled)) {
             emit_to(env, event_callback, focused_id_, "click");
           }
-          if (target->handler->kind != ElementHandler::Kind::kInput || bool_prop(*target, "readOnly")) continue;
-          std::string value = string_prop(*target, "value");
+          if (target->handler->kind != ElementHandler::Kind::kInput || bool_prop(*target, CustomPropertyId::kReadOnly)) continue;
+          std::string value = string_prop(*target, CustomPropertyId::kValue);
           const bool control = (event.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0;
           const bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
           auto changed = [&]() {
             invalidate_paint(focused_id_);
-            emit_to(env, event_callback, focused_id_, "change", string_prop(*target, "value"), key);
+            emit_to(env, event_callback, focused_id_, "change", string_prop(*target, CustomPropertyId::kValue), key);
           };
           auto move_selection = [&](size_t next) {
             next = std::min(next, value.size());
-            if (shift) target->selection_end = next;
-            else target->selection_start = target->selection_end = next;
+            if (shift) target->input->selection_end = next;
+            else target->input->selection_start = target->input->selection_end = next;
             invalidate_paint(focused_id_);
           };
-          const size_t selection_begin = std::min(target->selection_start, target->selection_end);
-          const size_t selection_end = std::max(target->selection_start, target->selection_end);
+          const size_t selection_begin = std::min(target->input->selection_start, target->input->selection_end);
+          const size_t selection_end = std::max(target->input->selection_start, target->input->selection_end);
           if (control && code == SDLK_a) {
-            target->selection_start = 0;
-            target->selection_end = value.size();
+            target->input->selection_start = 0;
+            target->input->selection_end = value.size();
             invalidate_paint(focused_id_);
           } else if (control && (code == SDLK_c || code == SDLK_x)) {
             if (selection_end > selection_begin) {
@@ -758,28 +791,28 @@ class Renderer {
             replace_input_selection(*target, clipboard ? clipboard : "");
             if (clipboard) SDL_free(clipboard);
             changed();
-          } else if (control && code == SDLK_z && !shift && !target->undo_stack.empty()) {
-            target->redo_stack.push_back(value);
-            value = target->undo_stack.back();
-            target->undo_stack.pop_back();
-            target->props.insert_or_assign("value", value);
-            target->selection_start = target->selection_end = value.size();
+          } else if (control && code == SDLK_z && !shift && !target->input->undo_stack.empty()) {
+            target->input->redo_stack.push_back(value);
+            value = target->input->undo_stack.back();
+            target->input->undo_stack.pop_back();
+            target->props.insert_or_assign(CustomPropertyId::kValue, value);
+            target->input->selection_start = target->input->selection_end = value.size();
             changed();
-          } else if (control && (code == SDLK_y || (shift && code == SDLK_z)) && !target->redo_stack.empty()) {
-            target->undo_stack.push_back(value);
-            value = target->redo_stack.back();
-            target->redo_stack.pop_back();
-            target->props.insert_or_assign("value", value);
-            target->selection_start = target->selection_end = value.size();
+          } else if (control && (code == SDLK_y || (shift && code == SDLK_z)) && !target->input->redo_stack.empty()) {
+            target->input->undo_stack.push_back(value);
+            value = target->input->redo_stack.back();
+            target->input->redo_stack.pop_back();
+            target->props.insert_or_assign(CustomPropertyId::kValue, value);
+            target->input->selection_start = target->input->selection_end = value.size();
             changed();
           } else if (code == SDLK_LEFT) {
             move_selection(!shift && selection_end > selection_begin
-                               ? selection_begin : previous_utf8(value, target->selection_end));
+                               ? selection_begin : previous_utf8(value, target->input->selection_end));
           } else if (code == SDLK_RIGHT) {
             move_selection(!shift && selection_end > selection_begin
-                               ? selection_end : next_utf8(value, target->selection_end));
+                               ? selection_end : next_utf8(value, target->input->selection_end));
           } else if (code == SDLK_UP || code == SDLK_DOWN) {
-            const size_t current = target->selection_end;
+            const size_t current = target->input->selection_end;
             const size_t marker = current == 0 ? std::string::npos : value.rfind('\n', current - 1);
             const size_t line_start = marker == std::string::npos ? 0 : marker + 1;
             const size_t column = current - line_start;
@@ -802,17 +835,17 @@ class Renderer {
               }
             }
           } else if (code == SDLK_HOME) {
-            const size_t newline = value.rfind('\n', target->selection_end == 0 ? 0 : target->selection_end - 1);
+            const size_t newline = value.rfind('\n', target->input->selection_end == 0 ? 0 : target->input->selection_end - 1);
             move_selection(newline == std::string::npos ? 0 : newline + 1);
           } else if (code == SDLK_END) {
-            const size_t newline = value.find('\n', target->selection_end);
+            const size_t newline = value.find('\n', target->input->selection_end);
             move_selection(newline == std::string::npos ? value.size() : newline);
           } else if (code == SDLK_BACKSPACE && (selection_end > selection_begin || !value.empty())) {
-            if (selection_end == selection_begin) target->selection_start = previous_utf8(value, selection_begin);
+            if (selection_end == selection_begin) target->input->selection_start = previous_utf8(value, selection_begin);
             replace_input_selection(*target, "");
             changed();
           } else if (code == SDLK_DELETE && (selection_end > selection_begin || selection_begin < value.size())) {
-            if (selection_end == selection_begin) target->selection_end = next_utf8(value, selection_end);
+            if (selection_end == selection_begin) target->input->selection_end = next_utf8(value, selection_end);
             replace_input_selection(*target, "");
             changed();
           } else if (code == SDLK_RETURN) {
@@ -857,14 +890,13 @@ class Renderer {
         const double value = animation.from + (animation.to - animation.from) * cycle;
         add_dirty_box(target->box);
         if (animation.opacity) target->style.opacity = value;
-        else target->props.insert_or_assign("value", value);
+        else target->props.insert_or_assign(CustomPropertyId::kValue, value);
         dirty_nodes_.insert(animation.id);
         dirty_ = true;
         if (finished) active = animations_.erase(active);
         else ++active;
       }
-      constexpr auto frame_interval = std::chrono::microseconds(8333);
-      do next_animation_frame_ += frame_interval;
+      do next_animation_frame_ += kRenderFrameInterval;
       while (next_animation_frame_ <= now);
     }
     const double scroll_blend = 1.0 - std::exp(-18.0 * elapsed);
@@ -875,14 +907,14 @@ class Renderer {
         active = scrolling_nodes_.erase(active);
         continue;
       }
-      const double remaining = target->scroll_target_y - target->scroll_y;
+      const double remaining = target->scroll->target_y - target->scroll->offset_y;
       if (std::abs(remaining) < 0.05) {
-        target->scroll_y = target->scroll_target_y;
+        target->scroll->offset_y = target->scroll->target_y;
         active = scrolling_nodes_.erase(active);
         continue;
       }
       add_dirty_box(target->box);
-      target->scroll_y += remaining * scroll_blend;
+      target->scroll->offset_y += remaining * scroll_blend;
       emit_scroll(env, event_callback, id, 0.0);
       dirty_nodes_.insert(id);
       scroll_dirty_nodes_.insert(id);
@@ -890,12 +922,15 @@ class Renderer {
       dirty_ = true;
       ++active;
     }
-    if (dirty_) render_frame(env);
+    const auto render_due = std::chrono::steady_clock::now();
+    if (dirty_ && (max_frame_rate_ <= 0.0 || render_due >= next_render_frame_)) {
+      render_frame(env);
+    }
     return running_;
   }
 
   void render_frame(napi_env env) {
-    if (!running_ || !root_id_) return;
+    if (!running_ || !root_id_ || !dirty_) return;
     const auto started = std::chrono::steady_clock::now();
 
     const auto layout_started = std::chrono::steady_clock::now();
@@ -959,6 +994,13 @@ class Renderer {
                           .count();
     frame_samples_.push_back(render_time_ms_);
     if (frame_samples_.size() > 240) frame_samples_.erase(frame_samples_.begin());
+    if (max_frame_rate_ > 0.0) {
+      const auto interval = std::chrono::microseconds(static_cast<int64_t>(
+          std::llround(1'000'000.0 / max_frame_rate_)));
+      next_render_frame_ = std::max(started + interval, std::chrono::steady_clock::now());
+    } else {
+      next_render_frame_ = std::chrono::steady_clock::time_point::min();
+    }
   }
 
  private:
@@ -1110,28 +1152,30 @@ class Renderer {
   }
 
   void remember_input(Node& node, const std::string& value) {
-    if (node.undo_stack.empty() || node.undo_stack.back() != value) {
-      node.undo_stack.push_back(value);
-      if (node.undo_stack.size() > 100) node.undo_stack.erase(node.undo_stack.begin());
+    auto& input = ensure_input_state(node);
+    if (input.undo_stack.empty() || input.undo_stack.back() != value) {
+      input.undo_stack.push_back(value);
+      if (input.undo_stack.size() > 100) input.undo_stack.erase(input.undo_stack.begin());
     }
-    node.redo_stack.clear();
+    input.redo_stack.clear();
   }
 
   std::string replace_input_selection(Node& node, const std::string& replacement) {
-    std::string value = string_prop(node, "value");
-    const size_t start = std::min(node.selection_start, node.selection_end);
-    const size_t end = std::max(node.selection_start, node.selection_end);
+    auto& input = ensure_input_state(node);
+    std::string value = string_prop(node, CustomPropertyId::kValue);
+    const size_t start = std::min(input.selection_start, input.selection_end);
+    const size_t end = std::max(input.selection_start, input.selection_end);
     remember_input(node, value);
     value.replace(start, end - start, replacement);
-    node.selection_start = node.selection_end = start + replacement.size();
-    node.props.insert_or_assign("value", value);
+    input.selection_start = input.selection_end = start + replacement.size();
+    node.props.insert_or_assign(CustomPropertyId::kValue, value);
     return value;
   }
 
   void position_input_caret(uint64_t id, double x, double y) {
     Node* target = node(id);
     if (!target || target->handler->kind != ElementHandler::Kind::kInput) return;
-    const std::string value = string_prop(*target, "value");
+    const std::string value = string_prop(*target, CustomPropertyId::kValue);
     const double line_height = target->style.line_height > 0.0
                                    ? target->style.line_height
                                    : target->style.font_size * 1.35;
@@ -1153,7 +1197,7 @@ class Renderer {
       if (measure_text(value.substr(line_start, next - line_start), target->style.font_size).w > local_x) break;
       caret = next;
     }
-    target->selection_start = target->selection_end = caret;
+    target->input->selection_start = target->input->selection_end = caret;
     invalidate_paint(id);
   }
 
@@ -1326,7 +1370,7 @@ class Renderer {
   }
 
   void paint_svg(BLContext& context, const Node& n, uint32_t color) const {
-    const std::string source = svg_source_for(string_prop(n, "src"));
+    const std::string source = svg_source_for(string_prop(n, CustomPropertyId::kSrc));
     if (source.empty()) return;
     std::string svg_tag;
     const size_t svg_start = source.find("<svg");
@@ -1422,7 +1466,8 @@ class Renderer {
     const bool inside = it->second.box.contains(x, y);
     if (!inside && it->second.style.overflow != Style::Overflow::kVisible) return 0;
     if (it->second.handler->kind == ElementHandler::Kind::kVirtualList) {
-      for (size_t i = it->second.visible_end; i > it->second.visible_start; --i) {
+      const auto& list = *it->second.virtual_list;
+      for (size_t i = list.visible_end; i > list.visible_start; --i) {
         const uint64_t hit = hit_test(it->second.children[i - 1], x, y, event);
         if (hit) return hit;
       }
@@ -1448,12 +1493,12 @@ class Renderer {
 
   Box scrollbar_thumb(const Node& node) const {
     if (node.style.overflow != Style::Overflow::kScroll ||
-        node.content_height <= node.box.h + 0.5) return {};
+        !node.scroll || node.scroll->content_height <= node.box.h + 0.5) return {};
     const double track_height = std::max(0.0, node.box.h - 8.0);
-    const double thumb_height = std::max(24.0, track_height * node.box.h / node.content_height);
-    const double max_scroll = std::max(1.0, node.content_height - node.box.h);
+    const double thumb_height = std::max(24.0, track_height * node.box.h / node.scroll->content_height);
+    const double max_scroll = std::max(1.0, node.scroll->content_height - node.box.h);
     const double travel = std::max(0.0, track_height - thumb_height);
-    return {node.box.x + node.box.w - 9.0, node.box.y + 4.0 + travel * node.scroll_y / max_scroll,
+    return {node.box.x + node.box.w - 9.0, node.box.y + 4.0 + travel * node.scroll->offset_y / max_scroll,
             8.0, thumb_height};
   }
 
@@ -1488,8 +1533,8 @@ class Renderer {
     const double travel = std::max(1.0, track_height - thumb.h);
     const double ratio = std::clamp((y - target->box.y - 4.0 - scrollbar_drag_offset_) / travel,
                                     0.0, 1.0);
-    target->scroll_y = ratio * std::max(0.0, target->content_height - target->box.h);
-    target->scroll_target_y = target->scroll_y;
+    target->scroll->offset_y = ratio * std::max(0.0, target->scroll->content_height - target->box.h);
+    target->scroll->target_y = target->scroll->offset_y;
     scrolling_nodes_.erase(scrollbar_drag_id_);
     invalidate_layout(scrollbar_drag_id_);
     emit_scroll(env, callback_ref, scrollbar_drag_id_, 0.0);
@@ -1516,8 +1561,8 @@ class Renderer {
         })) return hit;
     const double default_tab = it->second.type == "button" ||
                                it->second.handler->kind == ElementHandler::Kind::kInput ? 0.0 : -1.0;
-    return inside && !bool_prop(it->second, "disabled") &&
-                   number_prop(it->second, "tabIndex", default_tab) >= 0.0 ? id : 0;
+    return inside && !bool_prop(it->second, CustomPropertyId::kDisabled) &&
+                   number_prop(it->second, CustomPropertyId::kTabIndex, default_tab) >= 0.0 ? id : 0;
   }
 
   uint64_t hit_test_hoverable(uint64_t id, double x, double y) const {
@@ -1541,7 +1586,7 @@ class Renderer {
           return hit_test_selectable_text(child, x, y);
         })) return hit;
     return inside && it->second.handler->kind == ElementHandler::Kind::kText &&
-                   bool_prop(it->second, "selectable") ? id : 0;
+                   bool_prop(it->second, CustomPropertyId::kSelectable) ? id : 0;
   }
 
   void update_hover(napi_env env, napi_ref callback_ref, double x, double y) {
@@ -1582,24 +1627,24 @@ class Renderer {
     auto found = nodes_.find(id);
     if (found == nodes_.end() || !found->second.style.visible) return;
     const Node& node = found->second;
-    std::string role = string_prop(node, "accessibilityRole");
+    std::string role = string_prop(node, CustomPropertyId::kAccessibilityRole);
     if (role.empty()) {
       if (node.type == "button") role = "button";
       else if (node.handler->kind == ElementHandler::Kind::kInput) role = "textbox";
       else if (node.handler->kind == ElementHandler::Kind::kImage) role = "image";
     }
     if (!role.empty()) {
-      std::string label = string_prop(node, "accessibilityLabel");
-      if (label.empty()) label = string_prop(node, "alt");
+      std::string label = string_prop(node, CustomPropertyId::kAccessibilityLabel);
+      if (label.empty()) label = string_prop(node, CustomPropertyId::kAlt);
       if (label.empty()) label = descendant_text(id);
-      if (label.empty()) label = string_prop(node, "placeholder");
-      std::string checked = string_prop(node, "accessibilityChecked");
-      if (checked.empty() && node.props.find("accessibilityChecked") != node.props.end()) {
-        checked = bool_prop(node, "accessibilityChecked") ? "true" : "false";
+      if (label.empty()) label = string_prop(node, CustomPropertyId::kPlaceholder);
+      std::string checked = string_prop(node, CustomPropertyId::kAccessibilityChecked);
+      if (checked.empty() && node.props.find(CustomPropertyId::kAccessibilityChecked) != node.props.end()) {
+        checked = bool_prop(node, CustomPropertyId::kAccessibilityChecked) ? "true" : "false";
       }
-      result.push_back({id, role, label, string_prop(node, "accessibilityDescription"),
-                        string_prop(node, "accessibilityValue"), checked,
-                        bool_prop(node, "disabled"), bool_prop(node, "accessibilitySelected"), node.box});
+      result.push_back({id, role, label, string_prop(node, CustomPropertyId::kAccessibilityDescription),
+                        string_prop(node, CustomPropertyId::kAccessibilityValue), checked,
+                        bool_prop(node, CustomPropertyId::kDisabled), bool_prop(node, CustomPropertyId::kAccessibilitySelected), node.box});
     }
     for (uint64_t child : node.children) collect_accessibility(child, result);
   }
@@ -1609,8 +1654,8 @@ class Renderer {
     if (it == nodes_.end() || !it->second.style.visible) return;
     const double default_tab = it->second.type == "button" ||
                                it->second.handler->kind == ElementHandler::Kind::kInput ? 0.0 : -1.0;
-    if (!bool_prop(it->second, "disabled") &&
-        number_prop(it->second, "tabIndex", default_tab) >= 0.0) {
+    if (!bool_prop(it->second, CustomPropertyId::kDisabled) &&
+        number_prop(it->second, CustomPropertyId::kTabIndex, default_tab) >= 0.0) {
       result.push_back(id);
     }
     for (uint64_t child : it->second.children) collect_focusable(child, result);
@@ -1691,10 +1736,10 @@ class Renderer {
     set_number(env, payload, "y", 0.0);
     set_number(env, payload, "button", 0.0);
     set_number(env, payload, "deltaY", delta_y);
-    set_number(env, payload, "scrollOffset", target->scroll_y);
-    set_number(env, payload, "scrollTarget", target->scroll_target_y);
+    set_number(env, payload, "scrollOffset", target->scroll->offset_y);
+    set_number(env, payload, "scrollTarget", target->scroll->target_y);
     set_number(env, payload, "viewportSize", target->box.h);
-    set_number(env, payload, "contentSize", target->content_height);
+    set_number(env, payload, "contentSize", target->scroll->content_height);
     napi_value result;
     napi_call_function(env, global, callback, 1, &payload, &result);
   }
@@ -1802,6 +1847,9 @@ class Renderer {
   size_t text_selection_focus_ = 0;
   bool selecting_text_ = false;
   std::chrono::steady_clock::time_point last_poll_at_ = std::chrono::steady_clock::now();
+  std::chrono::steady_clock::time_point next_render_frame_ =
+      std::chrono::steady_clock::time_point::min();
+  double max_frame_rate_ = 120.0;
 };
 
 #include "napi_protocol.inc"

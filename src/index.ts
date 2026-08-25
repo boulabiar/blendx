@@ -3,6 +3,7 @@ import ReactReconciler from "react-reconciler"
 import ReconcilerConstants from "react-reconciler/constants.js"
 import { dispatchEvent, registerEvent, unregisterEvent } from "./event-registry.js"
 import { loadNativeRenderer } from "./native.js"
+import { customProperties, customPropertyIds } from "./generated/custom-properties.js"
 import type {
   BlendxEvent,
   BlendxRoot,
@@ -89,7 +90,10 @@ function createBatchedRenderer(raw: NativeRenderer): NativeRenderer {
     setStyle: (id, style) => pending.push(["style", id, style]),
     setStylePatch: (id, patch) => pending.push(["stylePatch", id, ...patch]),
     setText: (id, text) => pending.push(["text", id, text]),
-    setCustomProp: (id, name, value) => pending.push(["prop", id, name, value]),
+    setCustomProp: (id, name, value) => {
+      const propertyId = customPropertyIds[name as keyof typeof customPropertyIds]
+      pending.push(["prop", id, propertyId ?? name, value])
+    },
     setEventListener: (id, type, enabled) => pending.push(["event", id, type, enabled]),
     setRoot: (id) => pending.push(["root", id]),
     commitMutations: () => { if (flush()) raw.commitMutations() },
@@ -112,6 +116,7 @@ function createBatchedRenderer(raw: NativeRenderer): NativeRenderer {
     getSelectedText: raw.getSelectedText.bind(raw),
     getAccessibilityTree: raw.getAccessibilityTree.bind(raw),
     nextFrameDelay: raw.nextFrameDelay.bind(raw),
+    setFrameRateLimit: raw.setFrameRateLimit.bind(raw),
   }
 }
 
@@ -220,16 +225,7 @@ function encodeStylePatch(
 }
 
 function syncCustomProps(id: number, oldProps: HostProps | null, props: HostProps): void {
-  for (const name of [
-    "itemHeight", "overdraw", "estimatedItemHeight", "alignment", "followTail", "src", "alt", "objectFit",
-    "commands", "source", "code", "language", "showLineNumbers", "showHeader",
-    "patch", "wordDiff", "value", "max", "animationDurationMs", "animationLoop", "animationAlternate",
-    "animateValue", "animateOpacity", "placeholder", "readOnly", "password", "selectable", "minRows",
-    "maxRows", "autoFocus", "position", "side", "align", "anchor", "offset",
-    "anchorGap", "anchorId", "tabIndex", "disabled", "modal", "accessibilityRole",
-    "accessibilityLabel", "accessibilityDescription", "accessibilityValue",
-    "accessibilityChecked", "accessibilitySelected",
-  ] as const) {
+  for (const name of customProperties) {
     if (props[name] !== oldProps?.[name]) native().setCustomProp(id, name, props[name] ?? null)
   }
 }
@@ -395,6 +391,7 @@ export function render(node: React.ReactNode, options: WindowOptions = {}): Blen
   nextElementId = 0
 
   const containerInfo: Container = { renderer }
+  let currentNode = node
   // The signature intentionally follows React 19 / react-reconciler 0.33.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const container = (reconciler.createContainer as any)(
@@ -439,12 +436,26 @@ export function render(node: React.ReactNode, options: WindowOptions = {}): Blen
   }
   if (!(globalThis as typeof globalThis & { __blendxNativeEventLoop?: boolean }).__blendxNativeEventLoop) tick()
 
+  const flush = (): void => {
+    // Re-submit the current root in a synchronous lane. This promotes state
+    // queued by imperative handles, which otherwise remains scheduler-timed.
+    flushSync(() => reconciler.updateContainer(currentNode, container, null, () => {}))
+    // Passive effects may enqueue more passive effects, so drain the reconciler
+    // before asking native to lay out and paint the resulting mutations.
+    while (reconciler.flushPassiveEffects()) flushSync(() => {})
+    // Explicit flushing is deterministic and intentionally bypasses the
+    // production event-loop frame deadline used to coalesce input bursts.
+    renderer.renderFrame()
+  }
+
   return {
     renderer,
     render(nextNode): void {
       activeRenderer = renderer
+      currentNode = nextNode
       flushSync(() => reconciler.updateContainer(nextNode, container, null, () => {}))
     },
+    flush,
     unmount: stop,
     stop,
   }

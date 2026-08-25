@@ -142,7 +142,7 @@ export const ContextMenuTrigger = React.forwardRef<BlendxElement, ContextMenuTri
         tabIndex={props.tabIndex ?? 0}
         onMouseDown={(event) => {
           onMouseDown?.(event)
-          if (event.button === 3) setTimeout(() => menu.openAt({ x: event.x, y: event.y }), 0)
+          if (event.button === 3) menu.openAt({ x: event.x, y: event.y })
         }}
         onKeyDown={(event) => {
           onKeyDown?.(event)

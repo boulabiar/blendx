@@ -79,7 +79,7 @@ test("React mounts through the reconciler and renders with Blend2D", async () =>
     { width: 320, height: 200, threads: 2, headless: true }
   )
 
-  await new Promise((resolve) => setTimeout(resolve, 25))
+  app.flush()
   const stats = app.renderer.getStats()
   assert.equal(stats.nodeCount, 2)
   assert.ok(stats.frameCount >= 1)
@@ -87,7 +87,7 @@ test("React mounts through the reconciler and renders with Blend2D", async () =>
 
   const frameCount = stats.frameCount
   app.render(tree())
-  await new Promise((resolve) => setTimeout(resolve, 25))
+  app.flush()
   assert.equal(app.renderer.getStats().frameCount, frameCount)
   app.stop()
 })
@@ -129,12 +129,12 @@ test("VirtualList memory-windows variable-height rows and scrolls by index", asy
     }),
     { width: 240, height: 120, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 30))
+  app.flush()
   try {
     assert.ok(app.renderer.getStats().nodeCount < 30, JSON.stringify(app.renderer.getStats()))
     assert.ok(visible[1] < 12, JSON.stringify(visible))
     list.current.scrollToIndex(9_000, "start")
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    app.flush()
     assert.ok(visible[0] <= 9_000 && visible[1] > 9_000, JSON.stringify(visible))
     assert.ok(app.renderer.getStats().nodeCount < 30, JSON.stringify(app.renderer.getStats()))
   } finally {
@@ -156,10 +156,10 @@ test("Dialog traps focus, dismisses outside, and restores its trigger", async ()
       h("button", { onFocus: () => { outsideFocused = true }, style: { width: 80, height: 30, position: "absolute", top: 160 } }, "Outside")),
     { width: 300, height: 200, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 25))
+  app.flush()
   try {
     click(globalThis.__blendxNative, 20, 15)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(open, true)
     const modal = app.renderer.getAccessibilityTree().find((node) => node.role === "dialog")
     assert.deepEqual(
@@ -167,10 +167,10 @@ test("Dialog traps focus, dismisses outside, and restores its trigger", async ()
       { x: 0, y: 0, width: 300, height: 200 },
     )
     globalThis.__blendxNative.dispatchKey("Tab")
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(outsideFocused, false)
     click(globalThis.__blendxNative, 10, 100)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(open, false)
     assert.ok(triggerFocused >= 1)
   } finally {
@@ -187,14 +187,14 @@ test("Toast queues notifications and supports dismissal", async () => {
       h(ToastViewport, null))
   }
   const app = render(h(ToastProvider, null, h(ToastDemo)), { width: 400, height: 240, headless: true })
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   try {
     const before = app.renderer.getStats().nodeCount
     click(globalThis.__blendxNative, 20, 15)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.ok(app.renderer.getStats().nodeCount > before)
     click(globalThis.__blendxNative, 240, 35)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(app.renderer.getStats().nodeCount, before)
   } finally {
     app.stop()
@@ -239,7 +239,7 @@ test("semantic controls expose accessibility state", async () => {
         h(TabsList, null, h(TabsTrigger, { value: "one" }, "One")))),
     { width: 320, height: 180, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   try {
     const tree = app.renderer.getAccessibilityTree()
     assert.equal(tree.find((node) => node.label === "Enable sync")?.checked, "true")
@@ -261,7 +261,7 @@ test("React forwards rich element properties in one native batch", async () => {
       h("anchored", { position: { x: 200, y: 20 }, side: "bottom", style: { width: 100, height: 30, position: "absolute" } },
         h("text", null, "overlay")))
     , { width: 400, height: 240, headless: true })
-  await new Promise((resolve) => setTimeout(resolve, 25))
+  app.flush()
   const stats = app.renderer.getStats()
   assert.equal(stats.nodeCount, 7)
   assert.ok(stats.frameCount >= 1)
@@ -279,9 +279,9 @@ test("Tooltip opens on native hover and closes after leaving", async () => {
           React.createElement("text", null, "Tooltip")))),
     { width: 360, height: 220, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   pointer(globalThis.__blendxNative, "mouseMove", 20, 20)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   assert.equal(open, true)
   pointer(globalThis.__blendxNative, "mouseMove", 320, 200)
   await new Promise((resolve) => setTimeout(resolve, 120))
@@ -301,13 +301,13 @@ test("Select opens, anchors content, and chooses an item", async () => {
           React.createElement(SelectItem, { value: "beta", style: { width: "100%", height: 32 } }, "Beta")))),
     { width: 400, height: 260, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   click(globalThis.__blendxNative, 30, 25)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   assert.ok(app.renderer.getStats().nodeCount >= 8)
   globalThis.__blendxNative.dispatchKey("ArrowDown")
   globalThis.__blendxNative.dispatchKey("Enter")
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   assert.equal(selected, "beta")
   app.stop()
 })
@@ -324,11 +324,11 @@ test("Combobox opens from its native input and selects a filtered-list item", as
             React.createElement(ComboboxItem, { key: item, value: item, style: { width: "100%", height: 32 } }, item))))),
     { width: 400, height: 280, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   click(globalThis.__blendxNative, 30, 25)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   click(globalThis.__blendxNative, 30, 105)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  app.flush()
   assert.equal(selected, "Next.js")
   app.stop()
 })
@@ -349,34 +349,34 @@ test("selection controls respond to pointer and keyboard interaction", async () 
       h(Slider, { onValueChange: (value) => { slider = value }, style: { width: 200, height: 24 } })),
     { width: 320, height: 240, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 25))
+  app.flush()
   try {
     click(globalThis.__blendxNative, 20, 20)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(checked, true)
     globalThis.__blendxNative.dispatchKey("Space")
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(checked, false)
 
     click(globalThis.__blendxNative, 20, 60)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(switched, true)
 
     click(globalThis.__blendxNative, 20, 132)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(radio, "beta")
     globalThis.__blendxNative.dispatchKey("ArrowLeft")
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(radio, "alpha")
 
     pointer(globalThis.__blendxNative, "mouseDown", 110, 182)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     pointer(globalThis.__blendxNative, "mouseMove", 300, 182)
     pointer(globalThis.__blendxNative, "mouseUp", 300, 182)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(slider, 100)
     globalThis.__blendxNative.dispatchKey("ArrowLeft")
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(slider, 99)
   } finally {
     app.stop()
@@ -410,27 +410,27 @@ test("tabs, accordion, and collapsible implement pointer and keyboard state", as
         h(CollapsibleContent, { style: { width: 300, height: 30 } }, "Details"))),
     { width: 360, height: 340, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 25))
+  app.flush()
   try {
     click(globalThis.__blendxNative, 130, 25)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(tab, "activity")
     globalThis.__blendxNative.dispatchKey("ArrowLeft")
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(tab, "overview")
 
     click(globalThis.__blendxNative, 20, 125)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(accordion, "")
     globalThis.__blendxNative.dispatchKey("ArrowDown")
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(focusedAccordion, "second")
 
     click(globalThis.__blendxNative, 20, 265)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(collapsedOpen, true)
     globalThis.__blendxNative.dispatchKey("Space")
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(collapsedOpen, false)
   } finally {
     app.stop()
@@ -459,29 +459,29 @@ test("dropdown and context menus support keyboard, selection, and right click", 
           h(ContextMenuItem, { value: "inspect", onSelect: () => { contextSelected = "inspect" }, style: { width: 160, height: 32 } }, "Inspect")))),
     { width: 420, height: 320, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 25))
+  app.flush()
   try {
     click(globalThis.__blendxNative, 30, 25)
     globalThis.__blendxNative.dispatchKey("ArrowDown")
     globalThis.__blendxNative.dispatchKey("Enter")
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    app.flush()
     assert.equal(selected, "beta")
 
     click(globalThis.__blendxNative, 30, 25)
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    app.flush()
     click(globalThis.__blendxNative, 30, 126)
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    app.flush()
     assert.equal(pinned, true)
 
     globalThis.__blendxNative.dispatchPointer("mouseDown", 400, 300, 3)
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    app.flush()
     assert.equal(contextOpen, true)
     globalThis.__blendxNative.dispatchPointer("mouseUp", 400, 300, 3)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    app.flush()
     assert.equal(contextSelected, "")
     assert.equal(contextOpen, true)
     click(globalThis.__blendxNative, 300, 292)
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    app.flush()
     assert.equal(contextSelected, "inspect")
   } finally {
     app.stop()
@@ -502,14 +502,14 @@ test("dropdown submenus open from the parent keyboard model", async () => {
             h(DropdownMenuItem, { value: "nested", onSelect: () => { selected = "nested" }, style: { width: 142, height: 30 } }, "Nested"))))),
     { width: 420, height: 220, headless: true },
   )
-  await new Promise((resolve) => setTimeout(resolve, 25))
+  app.flush()
   try {
     click(globalThis.__blendxNative, 30, 20)
     globalThis.__blendxNative.dispatchKey("ArrowDown")
     globalThis.__blendxNative.dispatchKey("ArrowRight")
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    app.flush()
     globalThis.__blendxNative.dispatchKey("Enter")
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    app.flush()
     assert.equal(selected, "nested")
   } finally {
     app.stop()

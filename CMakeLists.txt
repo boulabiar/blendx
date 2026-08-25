@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(blendx LANGUAGES C CXX ASM)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -46,6 +48,21 @@ function(blendx_enable_warnings target)
   else()
     target_compile_options(${target} PRIVATE -Wall -Wextra)
   endif()
+endfunction()
+
+option(BLENDX_ENABLE_SANITIZERS "Instrument BlendX-owned native code with ASan and UBSan" OFF)
+function(blendx_enable_sanitizers target)
+  if(NOT BLENDX_ENABLE_SANITIZERS)
+    return()
+  endif()
+  if(MSVC)
+    message(FATAL_ERROR "BLENDX_ENABLE_SANITIZERS currently requires Clang or GCC")
+  endif()
+  target_compile_options(${target} PRIVATE
+    -fsanitize=address,undefined
+    -fno-omit-frame-pointer
+    -fno-sanitize-recover=all)
+  target_link_options(${target} PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
 endfunction()
 
 # SDL2 is normally supplied by the operating system. Prefer its cross-platform
@@ -145,7 +162,9 @@ target_link_libraries(blendx_hermes PRIVATE
   yogacore
   blend2d::blend2d
   ${BLENDX_SDL_TARGET})
+target_compile_features(blendx_hermes PRIVATE cxx_std_20)
 blendx_enable_warnings(blendx_hermes)
+blendx_enable_sanitizers(blendx_hermes)
 set_target_properties(blendx_hermes PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
@@ -160,10 +179,22 @@ if(BLENDX_BUILD_NODE_ADDON)
     "${BLENDX_HERMES_SOURCE_DIR}/API"
     "${BLENDX_HERMES_SOURCE_DIR}/include")
   target_link_libraries(blendx_native PRIVATE yogacore blend2d::blend2d ${BLENDX_SDL_TARGET})
+  target_compile_features(blendx_native PRIVATE cxx_std_20)
   blendx_enable_warnings(blendx_native)
+  blendx_enable_sanitizers(blendx_native)
   set_target_properties(blendx_native PROPERTIES
     PREFIX ""
     SUFFIX ".node"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/dist/native"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/dist/native")
+endif()
+
+if(BUILD_TESTING)
+  add_executable(blendx_model_tests tests/model_test.cpp)
+  target_include_directories(blendx_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/native")
+  target_link_libraries(blendx_model_tests PRIVATE yogacore blend2d::blend2d)
+  target_compile_features(blendx_model_tests PRIVATE cxx_std_20)
+  blendx_enable_warnings(blendx_model_tests)
+  blendx_enable_sanitizers(blendx_model_tests)
+  add_test(NAME blendx_model_tests COMMAND blendx_model_tests)
 endif()

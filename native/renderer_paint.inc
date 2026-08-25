@@ -13,7 +13,7 @@
         const size_t end = source.find("**", at + 2);
         if (end != std::string::npos) {
           const std::string run = source.substr(at + 2, end - at - 2);
-          draw_text(context, run, x, baseline, size * 1.02, 0xFFFFFFFFu);
+          draw_text(context, run, x, baseline, size * 1.02, DefaultPalette::text_strong);
           x += measure_text(run, size * 1.02).w;
           at = end + 2;
           continue;
@@ -25,7 +25,7 @@
           const std::string run = source.substr(at + 1, end - at - 1);
           const double width = measure_text(run, size * 0.92).w + 6.0;
           context.fill_round_rect(BLRect(x, baseline - size, width, size * 1.3), 3.0, 3.0,
-                                  BLRgba32(0xFF273142u));
+                                  BLRgba32(DefaultPalette::code_chip));
           draw_text(context, run, x + 3.0, baseline, size * 0.92, 0xFFF0ABFCu);
           x += width;
           at = end + 1;
@@ -39,7 +39,7 @@
         if (label_end != std::string::npos && label_end + 1 < source.size() &&
             source[label_end + 1] == '(' && target_end != std::string::npos) {
           const std::string run = source.substr(at + 1, label_end - at - 1);
-          draw_text(context, run, x, baseline, size, 0xFF60A5FAu);
+          draw_text(context, run, x, baseline, size, DefaultPalette::link);
           x += measure_text(run, size).w;
           at = target_end + 1;
           continue;
@@ -94,9 +94,10 @@
   }
 
   void paint_multiline(BLContext& context, const std::string& content, const Node& n,
-                       uint32_t color, double size, bool markdown, bool diff) const {
+                       uint32_t color, double size, bool markdown, bool diff,
+                       double offset_y = 0.0) const {
     const double line_height = n.style.line_height > 0.0 ? n.style.line_height : size * 1.45;
-    double y = n.box.y + n.style.padding_top;
+    double y = n.box.y + offset_y + n.style.padding_top;
     std::istringstream stream(content);
     std::string line;
     size_t line_number = 1;
@@ -116,12 +117,12 @@
           line_color = 0xFF93C5FDu;
         }
       } else if (markdown) {
-        if (line.rfind("### ", 0) == 0) { line.erase(0, 4); line_size = size * 1.12; line_color = 0xFFFFFFFFu; }
-        else if (line.rfind("## ", 0) == 0) { line.erase(0, 3); line_size = size * 1.25; line_color = 0xFFFFFFFFu; }
-        else if (line.rfind("# ", 0) == 0) { line.erase(0, 2); line_size = size * 1.45; line_color = 0xFFFFFFFFu; }
+        if (line.rfind("### ", 0) == 0) { line.erase(0, 4); line_size = size * 1.12; line_color = DefaultPalette::text_strong; }
+        else if (line.rfind("## ", 0) == 0) { line.erase(0, 3); line_size = size * 1.25; line_color = DefaultPalette::text_strong; }
+        else if (line.rfind("# ", 0) == 0) { line.erase(0, 2); line_size = size * 1.45; line_color = DefaultPalette::text_strong; }
         else if (line.rfind("- ", 0) == 0 || line.rfind("* ", 0) == 0) { line.replace(0, 1, "•"); }
         else if (line.rfind("> ", 0) == 0) { line_color = 0xFF94A3B8u; x += 10.0; }
-      } else if (bool_prop(n, "showLineNumbers")) {
+      } else if (bool_prop(n, CustomPropertyId::kShowLineNumbers)) {
         const std::string number_text = std::to_string(line_number);
         draw_text(context, number_text, x, y + line_height * 0.76, size * 0.85, 0xFF64748Bu);
         x += 42.0;
@@ -138,7 +139,7 @@
                      double font_size) const {
     const auto kind = n.handler->kind;
     if (kind == ElementHandler::Kind::kImage) {
-      const BLImage* image = image_for(string_prop(n, "src"));
+      const BLImage* image = image_for(string_prop(n, CustomPropertyId::kSrc));
       if (!image) {
         context.fill_rect(BLRect(n.box.x, n.box.y, n.box.w, n.box.h), BLRgba32(0xFF252A35u));
         context.stroke_line(n.box.x, n.box.y, n.box.x + n.box.w, n.box.y + n.box.h,
@@ -149,7 +150,7 @@
       }
       const double iw = image->width();
       const double ih = image->height();
-      const std::string fit = string_prop(n, "objectFit", "fill");
+      const std::string fit = string_prop(n, CustomPropertyId::kObjectFit, "fill");
       BLRect destination(n.box.x, n.box.y, n.box.w, n.box.h);
       if (fit == "contain" || fit == "scaleDown" || fit == "none") {
         double scale = fit == "none" ? 1.0 : std::min(n.box.w / iw, n.box.h / ih);
@@ -177,7 +178,7 @@
       return;
     }
     if (kind == ElementHandler::Kind::kCanvas) {
-      const auto* commands = prop_as<std::vector<CanvasCommand>>(n, "commands");
+      const auto* commands = prop_as<std::vector<CanvasCommand>>(n, CustomPropertyId::kCommands);
       if (!commands) return;
       for (const CanvasCommand& command : *commands) {
         const double x = n.box.x + command.x;
@@ -207,48 +208,46 @@
       return;
     }
     if (kind == ElementHandler::Kind::kProgress) {
-      const double maximum = std::max(0.0001, number_prop(n, "max", 100.0));
-      const double value = std::clamp(number_prop(n, "value", 0.0), 0.0, maximum);
+      const double maximum = std::max(0.0001, number_prop(n, CustomPropertyId::kMax, 100.0));
+      const double value = std::clamp(number_prop(n, CustomPropertyId::kValue, 0.0), 0.0, maximum);
       const double radius = std::min(n.box.h * 0.5, n.style.border_radius > 0.0 ? n.style.border_radius : n.box.h * 0.5);
-      context.fill_round_rect(BLRect(n.box.x, n.box.y, n.box.w, n.box.h), radius, radius, BLRgba32(n.style.background.value_or(0xFF273142u)));
+      context.fill_round_rect(BLRect(n.box.x, n.box.y, n.box.w, n.box.h), radius, radius, BLRgba32(n.style.background.value_or(DefaultPalette::code_chip)));
       if (value > 0.0) context.fill_round_rect(BLRect(n.box.x, n.box.y, n.box.w * value / maximum, n.box.h), radius, radius, BLRgba32(n.style.color.value_or(0xFF38BDF8u)));
       return;
     }
     if (kind == ElementHandler::Kind::kMarkdown) {
-      paint_multiline(context, string_prop(n, "source"), n, color, font_size, true, false);
+      paint_multiline(context, string_prop(n, CustomPropertyId::kSource), n, color, font_size, true, false);
       return;
     }
     if (kind == ElementHandler::Kind::kCode) {
       double offset = 0.0;
-      if (bool_prop(n, "showHeader")) {
-        const std::string header = string_prop(n, "language", "code");
+      if (bool_prop(n, CustomPropertyId::kShowHeader)) {
+        const std::string header = string_prop(n, CustomPropertyId::kLanguage, "code");
         context.fill_rect(BLRect(n.box.x, n.box.y, n.box.w, font_size * 2.0), BLRgba32(0xFF202632u));
         draw_text(context, header, n.box.x + 12.0, n.box.y + font_size * 1.35, font_size * 0.85, 0xFF94A3B8u);
         offset = font_size * 2.0;
       }
-      Node shifted = n;
-      shifted.box.y += offset;
-      shifted.box.h = std::max(0.0, shifted.box.h - offset);
-      paint_multiline(context, string_prop(n, "code"), shifted, color, font_size, false, false);
+      paint_multiline(context, string_prop(n, CustomPropertyId::kCode), n, color, font_size, false, false, offset);
       return;
     }
     if (kind == ElementHandler::Kind::kDiff) {
-      paint_multiline(context, string_prop(n, "patch"), n, color, font_size, false, true);
+      paint_multiline(context, string_prop(n, CustomPropertyId::kPatch), n, color, font_size, false, true);
       return;
     }
     if (kind == ElementHandler::Kind::kInput) {
-      const std::string value = string_prop(n, "value");
+      const std::string value = string_prop(n, CustomPropertyId::kValue);
       std::string display_value = value;
-      if (bool_prop(n, "password")) {
+      if (bool_prop(n, CustomPropertyId::kPassword)) {
         display_value.clear();
         for (size_t at = 0; at < value.size(); at = next_utf8(value, at)) display_value.push_back('*');
       }
-      const std::string display = value.empty() ? string_prop(n, "placeholder") : display_value;
+      const std::string display = value.empty() ? string_prop(n, CustomPropertyId::kPlaceholder) : display_value;
       const uint32_t display_color = value.empty() ? 0xFF64748Bu : color;
       const double line = n.style.line_height > 0.0 ? n.style.line_height : font_size * 1.35;
       std::istringstream stream(display);
       std::string text;
       const bool multiline = n.type == "textarea";
+      const auto& input = *n.input;
       const double content_height = std::max(0.0, n.box.h - n.style.padding_top - n.style.padding_bottom);
       double y = n.box.y + n.style.padding_top;
       if (!multiline) y += std::max(0.0, (content_height - line) * 0.5);
@@ -256,9 +255,9 @@
       size_t line_start = 0;
       while (std::getline(stream, text)) {
         caret_y = y;
-        if (!value.empty() && n.selection_start != n.selection_end) {
-          const size_t selection_start = std::min(n.selection_start, n.selection_end);
-          const size_t selection_end = std::max(n.selection_start, n.selection_end);
+        if (!value.empty() && input.selection_start != input.selection_end) {
+          const size_t selection_start = std::min(input.selection_start, input.selection_end);
+          const size_t selection_end = std::max(input.selection_start, input.selection_end);
           const size_t line_end = line_start + text.size();
           const size_t selected_start = std::max(selection_start, line_start);
           const size_t selected_end = std::min(selection_end, line_end);
@@ -275,8 +274,8 @@
         line_start += text.size() + 1;
         if (y >= n.box.y + n.box.h) break;
       }
-      if (n.id == focused_id_ && !bool_prop(n, "readOnly")) {
-        const size_t caret = std::min(n.selection_end, value.size());
+      if (n.id == focused_id_ && !bool_prop(n, CustomPropertyId::kReadOnly)) {
+        const size_t caret = std::min(input.selection_end, value.size());
         const size_t marker = caret == 0 ? std::string::npos : value.rfind('\n', caret - 1);
         const size_t caret_line_start = marker == std::string::npos ? 0 : marker + 1;
         const size_t caret_line = static_cast<size_t>(std::count(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(caret), '\n'));
@@ -285,9 +284,9 @@
         const Size measured = measure_text(value.substr(caret_line_start, caret - caret_line_start), font_size);
         const double caret_x = std::min(n.box.x + n.box.w - 3.0, n.box.x + n.style.padding_left + measured.w + 1.0);
         context.fill_rect(BLRect(caret_x, caret_y + 2.0, 1.5, line - 4.0), BLRgba32(color));
-        if (!n.composition.empty()) {
-          draw_text(context, n.composition, caret_x + 2.0, caret_y + line * 0.78, font_size, color);
-          const double composition_width = measure_text(n.composition, font_size).w;
+        if (!input.composition.empty()) {
+          draw_text(context, input.composition, caret_x + 2.0, caret_y + line * 0.78, font_size, color);
+          const double composition_width = measure_text(input.composition, font_size).w;
           context.fill_rect(BLRect(caret_x + 2.0, caret_y + line - 2.0,
                                    composition_width, 1.0), BLRgba32(color));
         }
@@ -373,7 +372,8 @@
       context.clip_to_rect(BLRect(n->box.x, n->box.y, n->box.w, n->box.h));
     }
     if (n->handler->kind == ElementHandler::Kind::kVirtualList) {
-      for (size_t i = n->visible_start; i < n->visible_end; ++i) {
+      const auto& list = *n->virtual_list;
+      for (size_t i = list.visible_start; i < list.visible_end; ++i) {
         paint_node(context, n->children[i], color, font_size, damage);
       }
     } else {
@@ -390,12 +390,13 @@
         for (uint64_t child : n->children) paint_node(context, child, color, font_size, damage);
       }
     }
-    if (n->style.overflow == Style::Overflow::kScroll && n->content_height > n->box.h + 0.5) {
+    if (n->style.overflow == Style::Overflow::kScroll && n->scroll &&
+        n->scroll->content_height > n->box.h + 0.5) {
       const double track_height = std::max(0.0, n->box.h - 8.0);
-      const double thumb_height = std::max(24.0, track_height * n->box.h / n->content_height);
-      const double max_scroll = std::max(1.0, n->content_height - n->box.h);
+      const double thumb_height = std::max(24.0, track_height * n->box.h / n->scroll->content_height);
+      const double max_scroll = std::max(1.0, n->scroll->content_height - n->box.h);
       const double travel = std::max(0.0, track_height - thumb_height);
-      const double thumb_y = n->box.y + 4.0 + travel * n->scroll_y / max_scroll;
+      const double thumb_y = n->box.y + 4.0 + travel * n->scroll->offset_y / max_scroll;
       context.fill_round_rect(BLRect(n->box.x + n->box.w - 6.0, thumb_y, 3.0, thumb_height),
                               1.5, 1.5, BLRgba32(0x805E6A7Eu));
     }

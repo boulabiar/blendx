@@ -446,8 +446,17 @@ napi_value apply_batch(napi_env env, napi_callback_info info) {
     } else if (kind == "event" && length >= 4) {
       renderer.set_event(id_arg(env, at(1)), string(env, at(2)), boolean(env, at(3)));
     } else if (kind == "prop" && length >= 4) {
-      renderer.set_custom_prop(id_arg(env, at(1)), string(env, at(2)),
-                               prop_value_from_js(env, at(3)));
+      napi_value property = at(2);
+      napi_valuetype property_type = napi_undefined;
+      napi_typeof(env, property, &property_type);
+      if (property_type == napi_number) {
+        renderer.set_custom_prop(id_arg(env, at(1)),
+                                 static_cast<uint32_t>(number(env, property)),
+                                 prop_value_from_js(env, at(3)));
+      } else {
+        renderer.set_custom_prop(id_arg(env, at(1)), string(env, property),
+                                 prop_value_from_js(env, at(3)));
+      }
     } else if (kind == "root" && length >= 2) {
       renderer.set_root(id_arg(env, at(1)));
     }
@@ -634,6 +643,12 @@ napi_value next_frame_delay(napi_env env, napi_callback_info) {
   return result;
 }
 
+napi_value set_frame_rate_limit(napi_env env, napi_callback_info info) {
+  auto values = args(env, info, 1);
+  if (!values.empty()) renderer.set_frame_rate_limit(number(env, values[0]));
+  return undefined(env);
+}
+
 napi_value module_init(napi_env env, napi_value exports) {
   const napi_property_descriptor properties[] = {
       {"init", nullptr, init, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -665,6 +680,7 @@ napi_value module_init(napi_env env, napi_value exports) {
       {"getAccessibilityTree", nullptr, get_accessibility_tree, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"getStats", nullptr, get_stats, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"nextFrameDelay", nullptr, next_frame_delay, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"setFrameRateLimit", nullptr, set_frame_rate_limit, nullptr, nullptr, nullptr, napi_default, nullptr},
   };
   napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
   return exports;

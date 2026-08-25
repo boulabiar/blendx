@@ -110,25 +110,19 @@ function VirtualListInner<T>(
   }), [items.length, offsets, scrollOffset, setNativeOffset, viewport])
 
   React.useLayoutEffect(() => {
-    const timer = setTimeout(() => {
-      if (!element.current) return
-      const renderer = loadNativeRenderer()
-      renderer.renderFrame()
-      const box = renderer.getElementBox(element.current.id)
-      if (box.height > 0) setViewport(box.height)
-    }, 0)
-    return () => clearTimeout(timer)
+    if (!element.current) return
+    const renderer = loadNativeRenderer()
+    renderer.renderFrame()
+    const box = renderer.getElementBox(element.current.id)
+    if (box.height > 0) setViewport(box.height)
   }, [style?.height])
 
   React.useLayoutEffect(() => {
     const grew = items.length > previousLength.current
     previousLength.current = items.length
     if (!followTail || !grew) return
-    const timer = setTimeout(() => {
-      loadNativeRenderer().renderFrame()
-      setNativeOffset(totalHeight)
-    }, 0)
-    return () => clearTimeout(timer)
+    loadNativeRenderer().renderFrame()
+    setNativeOffset(totalHeight)
   }, [followTail, items.length, setNativeOffset, totalHeight])
 
   React.useEffect(() => onVisibleRangeChange?.(start, end), [end, onVisibleRangeChange, start])

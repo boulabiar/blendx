@@ -42,7 +42,11 @@ cmake --build build --target blendx_hermes hermesc -j
 ```
 
 `npm test` additionally enables and builds the Node-compatible addon used by
-the native protocol tests. It is not part of the shipped Hermes application.
+the native protocol tests, validates generated protocol metadata, and compares
+a deterministic headless render with the checked-in golden PNG. It is not part
+of the shipped Hermes application. Configure with
+`-DBLENDX_ENABLE_SANITIZERS=ON` to instrument BlendX targets with ASan/UBSan;
+the same configuration runs in CI.
 
 Click **Increment** to exercise the full native event-to-React-state-to-native
 mutation round trip.
@@ -289,6 +293,14 @@ and SIGINT handling. Its event loop blocks in `SDL_WaitEventTimeout` while idle,
 wakes immediately for native input, and uses the next JavaScript timer as its
 deadline rather than polling every 8 ms. Native value/opacity animations use an
 absolute 120 Hz deadline and update damage without a React commit.
+The `setTimeout(tick, 8)` path in `src/index.ts` is only the Node-addon fallback
+used by development tests; the Hermes host sets `__blendxNativeEventLoop` and
+therefore never starts that timer.
+
+Custom properties have one schema in `schema/custom-properties.txt`. Generated
+TypeScript and C++ definitions provide compact numeric bridge IDs, enum-keyed
+native storage, and invalidation metadata. Scroll, virtual-list, text-editing,
+undo, and IME state is allocated only for nodes that need it.
 
 `layoutContain: true` is an explicit performance contract for fixed geometry:
 descendant content and intrinsic-source changes retain their existing boxes and
@@ -342,7 +354,8 @@ comparison.
 ## Adding another native element
 
 Register its name and handler kind in `ElementRegistry`, add its custom props to
-the React host types and `syncCustomProps()`, then implement its measurement,
+the React host types and `schema/custom-properties.txt`, run
+`npm run generate:properties`, then implement its measurement,
 paint and event behavior. The protocol transports numbers, booleans, strings,
 points, and retained canvas command arrays. Images and SVG file contents are
 cached on first use.

@@ -236,7 +236,7 @@ export type NativeMutation =
   | ["stylePatch", number, ...unknown[]]
   | ["text", number, string]
   | ["event", number, string, boolean]
-  | ["prop", number, string, unknown]
+  | ["prop", number, string | number, unknown]
   | ["root", number]
 
 export interface NativeRenderer {
@@ -270,10 +270,14 @@ export interface NativeRenderer {
   getSelectedText(): string
   getAccessibilityTree(): AccessibilityNode[]
   nextFrameDelay(): number
+  /** Set maximum paint rate in FPS; zero disables frame pacing. */
+  setFrameRateLimit(framesPerSecond: number): void
 }
 
 export interface BlendxRoot {
   render(node: ReactNode): void
+  /** Flush React passive effects and paint all currently pending native work. */
+  flush(): void
   unmount(): void
   stop(): void
   renderer: NativeRenderer

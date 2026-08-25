@@ -24,6 +24,8 @@
     }
   },
   "scripts": {
+    "generate:properties": "node tools/generate-custom-properties.mjs",
+    "check:generated": "node tools/generate-custom-properties.mjs --check",
     "build:native": "cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel && cmake --build build --target blendx_hermes hermesc -j",
     "build:test-addon": "cmake -S . -B build -DBLENDX_BUILD_NODE_ADDON=ON && cmake --build build --target blendx_native -j",
     "build:types": "tsc -p tsconfig.json",
@@ -66,7 +68,7 @@
     "compile:menus": "npm run build:native && node tools/hermes-app.mjs pack examples/menus.tsx build/blendx-menus",
     "compile:foundation": "npm run build:native && node tools/hermes-app.mjs pack examples/foundation.tsx build/blendx-foundation",
     "compile:visual-stress": "npm run build:native && node tools/hermes-app.mjs pack examples/visual-stress.tsx build/blendx-visual-stress",
-    "test": "npm run build && npm run build:test-addon && node --test tests/*.test.mjs"
+    "test": "npm run check:generated && npm run build && npm run build:test-addon && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

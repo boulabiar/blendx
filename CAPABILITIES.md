@@ -71,6 +71,13 @@ React commit duration, active animations, and both 60/120 Hz budget misses.
 
 ### Memory use
 
+Specialized scroll, virtual-list, selection, undo/redo, and IME state is
+allocated only for nodes that use it. On the development x86-64 build this
+reduced the core retained `Node` from 824 to 680 bytes (17.5%). In the identical
+1,000-widget sparse 5%/120 Hz workload, maximum RSS moved from 85,116 to 84,088
+KiB; allocator and runtime fixed costs make RSS savings smaller than the raw
+node-size reduction.
+
 The earlier paint-only virtualization retained every row and measured:
 
 | Messages | Retained native nodes | Maximum RSS |
@@ -88,6 +95,7 @@ range reporting, and draggable native scrollbars are supported.
 Scrolling now:
 
 - Accumulates repeated wheel events
+- Coalesces high-rate pointer/scroll input into at most one paint per 120 Hz frame
 - Uses 120 px per conventional mouse notch
 - Preserves proportional fractional trackpad deltas
 - Interpolates toward the accumulated target
@@ -200,6 +208,18 @@ Implemented:
 - Blend2D multithreaded contexts and runtime SIMD/JIT selection
 
 ## Important limitations
+
+### Internal architecture
+
+- `Renderer` is still a single native owner and the layout/paint `.inc` files
+  are textual seams inside one translation unit, not independently testable
+  subsystem classes yet
+- Style invalidation is compiler-maintained through `LayoutStyle` and
+  `VisualStyle`; per-kind scroll/list/input state is no longer carried by every
+  node, and custom-property IDs/invalidation come from one generated schema
+- The next structural step is extracting layout, painting, and input routing
+  behind narrow interfaces once those ownership boundaries need independent
+  tests; it is not required for the current single-renderer application model
 
 ### Text and Markdown
 

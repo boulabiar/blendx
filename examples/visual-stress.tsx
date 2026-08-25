@@ -97,7 +97,10 @@ const MetricTile = memo(function MetricTile({ index, profile }: { index: number;
   const snapshot = useCallback(() => versionStore.value(index), [index])
   const phase = useSyncExternalStore(subscribe, snapshot, snapshot)
   const paintPhase = profile === "paint" || profile === "dense" ? phase : 0
-  const color = COLORS[(index + paintPhase) % COLORS.length]!
+  // Keep the card chrome visually stable. The benchmark's activity comes from
+  // values, progress, charts, and the profile-specific layout/churn work—not
+  // from alternating the whole card like a selected/unselected state.
+  const color = COLORS[index % COLORS.length]!
   const value = (20 + ((index * 17 + phase * 13) % 800)) / 10
   const layoutPressure = profile === "layout"
   const commands = useMemo(() => chart(index, paintPhase, color), [color, index, paintPhase])
@@ -110,16 +113,16 @@ const MetricTile = memo(function MetricTile({ index, profile }: { index: number;
         height: layoutPressure ? 96 + (phase % 3) * 3 : 102,
         padding: layoutPressure ? 7 + (phase % 3) : 8,
         gap: layoutPressure ? 3 + (phase % 2) : 4,
-        backgroundColor: phase % 2 ? "#182435" : C.surface,
+        backgroundColor: C.surface,
         borderWidth: 1,
-        borderColor: phase % 5 === 0 ? color : C.border,
+        borderColor: C.border,
         borderRadius: 9,
         layoutContain: true,
       }}
     >
       <div style={{ height: 15, flexShrink: 0, flexDirection: "row", alignItems: "center" }}>
         <text style={{ flexGrow: 1, color: C.muted, fontSize: 7 }}>worker-{String(index).padStart(4, "0")}</text>
-        <badge style={{ paddingHorizontal: 5, paddingVertical: 2, backgroundColor: `${color}24` as Color, borderRadius: 4 }}><text style={{ color, fontSize: 6 }}>{phase % 7 === 0 ? "HOT" : "LIVE"}</text></badge>
+        <badge style={{ paddingHorizontal: 5, paddingVertical: 2, backgroundColor: `${color}24` as Color, borderRadius: 4 }}><text style={{ color, fontSize: 6 }}>LIVE</text></badge>
       </div>
       <div style={{ height: 22, flexShrink: 0, flexDirection: "row", alignItems: "end" }}>
         <text style={{ color: C.text, fontSize: 15 }}>{value.toFixed(1)}</text>
@@ -168,6 +171,7 @@ function VisualStressApp() {
   const [scale, setScale] = useState(initialScale)
   const [rate, setRate] = useState(initialRate)
   const [targetFps, setTargetFps] = useState(initialFps)
+  const [frameCapped, setFrameCapped] = useState(true)
   const [paused, setPaused] = useState(false)
   const [liveCount, setLiveCount] = useState(initialScale)
   const [stats, setStats] = useState<NativeStats | null>(null)
@@ -281,6 +285,7 @@ function VisualStressApp() {
             <Stat label="Dirty rectangles" value={String(stats?.dirtyRectCount ?? 0)} />
             <Stat label="Over 16.67 ms (rolling)" value={String(stats?.framesOverBudget ?? 0)} color={(stats?.framesOverBudget ?? 0) ? C.red : C.green} />
             <Stat label="Over 8.33 ms / animations" value={`${stats?.framesOver120Budget ?? 0} / ${stats?.activeAnimations ?? 0}`} color={(stats?.framesOver120Budget ?? 0) ? C.red : C.green} />
+            <Stat label="Frame pacing" value={frameCapped ? "120 FPS maximum" : "UNCAPPED"} color={frameCapped ? C.muted : C.amber} />
           </div>
 
           <div style={{ padding: 11, gap: 6, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 11 }}>
@@ -298,6 +303,15 @@ function VisualStressApp() {
             <div style={{ flexDirection: "row", gap: 5 }}>{RATES.map((value) => <div key={value} style={{ width: 0, flexGrow: 1 }}><ChoiceButton active={rate === value} label={`${value}%`} onClick={() => setRate(value)} /></div>)}</div>
             <text style={{ marginTop: 3, color: C.violet, fontSize: 7 }}>TARGET RATE</text>
             <div style={{ flexDirection: "row", gap: 5 }}>{FPS.map((value) => <div key={value} style={{ width: 0, flexGrow: 1 }}><ChoiceButton active={targetFps === value} label={`${value}`} onClick={() => setTargetFps(value)} /></div>)}<div style={{ width: 0, flexGrow: 1 }}><ChoiceButton active={paused} label={paused ? "Run" : "Pause"} onClick={() => setPaused((value) => !value)} /></div></div>
+            <ChoiceButton
+              active={!frameCapped}
+              label={frameCapped ? "Disable cap" : "Enable 120 cap"}
+              onClick={() => setFrameCapped((current) => {
+                const next = !current
+                app?.renderer.setFrameRateLimit(next ? 120 : 0)
+                return next
+              })}
+            />
           </div>
 
           <div style={{ flexGrow: 1, minHeight: 0, padding: 11, gap: 6, backgroundColor: "#101925", borderWidth: 1, borderColor: C.border, borderRadius: 11 }}>

@@ -134,10 +134,10 @@
       return measured;
     }
     if (node.handler->kind == ElementHandler::Kind::kVirtualList) {
-      return {width, node.children.size() * node.item_height};
+      return {width, node.children.size() * node.virtual_list->item_height};
     }
     if (node.handler->kind == ElementHandler::Kind::kImage) {
-      if (const BLImage* image = image_for(string_prop(node, "src"))) {
+      if (const BLImage* image = image_for(string_prop(node, CustomPropertyId::kSrc))) {
         return {static_cast<double>(image->width()), static_cast<double>(image->height())};
       }
       return {100.0, 100.0};
@@ -147,15 +147,17 @@
     if (node.handler->kind == ElementHandler::Kind::kSeparator) return {width, 1.0};
     if (node.handler->kind == ElementHandler::Kind::kProgress) return {120.0, 8.0};
     if (node.handler->kind == ElementHandler::Kind::kInput) {
-      const double rows = std::max(1.0, number_prop(node, "minRows", node.type == "textarea" ? 3.0 : 1.0));
+      const double rows = std::max(1.0, number_prop(node, CustomPropertyId::kMinRows, node.type == "textarea" ? 3.0 : 1.0));
       const double line = node.style.line_height > 0.0 ? node.style.line_height : node.style.font_size * 1.35;
       return {std::min(width, 320.0), rows * line};
     }
     if (node.handler->kind == ElementHandler::Kind::kMarkdown ||
         node.handler->kind == ElementHandler::Kind::kCode ||
         node.handler->kind == ElementHandler::Kind::kDiff) {
-      const char* prop = node.handler->kind == ElementHandler::Kind::kMarkdown ? "source" :
-                         node.handler->kind == ElementHandler::Kind::kCode ? "code" : "patch";
+      const CustomPropertyId prop = node.handler->kind == ElementHandler::Kind::kMarkdown
+          ? CustomPropertyId::kSource
+          : node.handler->kind == ElementHandler::Kind::kCode
+              ? CustomPropertyId::kCode : CustomPropertyId::kPatch;
       const double line = node.style.line_height > 0.0 ? node.style.line_height : node.style.font_size * 1.45;
       return {width, line_count(string_prop(node, prop)) * line};
     }
@@ -170,7 +172,7 @@
     Node* node = renderer->node(context->id);
     if (!node) return {0.0f, 0.0f};
     const double available_width = width_mode == YGMeasureModeUndefined
-                                       ? 1000000.0 : std::max(0.0f, width);
+                                       ? kUnconstrainedMeasureWidth : std::max(0.0f, width);
     Size measured = renderer->intrinsic_size(*node, available_width);
     if (width_mode == YGMeasureModeExactly) measured.w = width;
     else if (width_mode == YGMeasureModeAtMost) measured.w = std::min(measured.w, static_cast<double>(width));
@@ -222,7 +224,11 @@
     YGNodeSetHasNewLayout(current->yoga, false);
     const bool geometry_changed = previous.x != current->box.x || previous.y != current->box.y ||
                                   previous.w != current->box.w || previous.h != current->box.h;
-    if (current->handler->kind != ElementHandler::Kind::kVirtualList) {
+    double scroll_offset = 0.0;
+    bool scroll_changed = false;
+    if (current->handler->kind != ElementHandler::Kind::kVirtualList &&
+        current->style.overflow == Style::Overflow::kScroll) {
+      auto& scroll = ensure_scroll_state(*current);
       double content_bottom = current->style.padding_top;
       for (uint64_t child_id : current->children) {
         Node* child = node(child_id);
@@ -230,14 +236,15 @@
         content_bottom = std::max(content_bottom,
             static_cast<double>(YGNodeLayoutGetTop(child->yoga) + YGNodeLayoutGetHeight(child->yoga)));
       }
-      current->content_height = content_bottom + current->style.padding_bottom;
-      const double max_scroll = std::max(0.0, current->content_height - current->box.h);
-      current->scroll_y = std::clamp(current->scroll_y, 0.0, max_scroll);
-      current->scroll_target_y = std::clamp(current->scroll_target_y, 0.0, max_scroll);
+      scroll.content_height = content_bottom + current->style.padding_bottom;
+      const double max_scroll = std::max(0.0, scroll.content_height - current->box.h);
+      scroll.offset_y = std::clamp(scroll.offset_y, 0.0, max_scroll);
+      scroll.target_y = std::clamp(scroll.target_y, 0.0, max_scroll);
+      scroll_changed = scroll.last_applied_offset_y != scroll.offset_y;
+      scroll.last_applied_offset_y = scroll.offset_y;
+      scroll_offset = scroll.offset_y;
     }
-    const bool scroll_changed = current->last_applied_scroll_y != current->scroll_y;
-    current->last_applied_scroll_y = current->scroll_y;
-    const double child_origin_y = current->box.y - current->scroll_y;
+    const double child_origin_y = current->box.y - scroll_offset;
     for (uint64_t child_id : current->children) {
       Node* child = node(child_id);
       if (child && yoga_child_participates(*current, *child)) {
@@ -259,29 +266,31 @@
   }
 
   void layout_virtual_children(Node& list) {
-    list.content_height = list.children.size() * list.item_height +
+    auto& scroll = ensure_scroll_state(list);
+    auto& virtual_list = ensure_virtual_list_state(list);
+    scroll.content_height = list.children.size() * virtual_list.item_height +
                           list.style.padding_top + list.style.padding_bottom;
     const double inner_h = std::max(0.0, list.box.h - list.style.padding_top - list.style.padding_bottom);
     const double inner_w = std::max(0.0, list.box.w - list.style.padding_left - list.style.padding_right);
-    const double max_scroll = std::max(0.0, list.content_height - list.box.h);
-    if (bool_prop(list, "followTail") && list.children.size() != list.last_child_count) {
-      list.scroll_y = max_scroll;
-      list.scroll_target_y = max_scroll;
+    const double max_scroll = std::max(0.0, scroll.content_height - list.box.h);
+    if (bool_prop(list, CustomPropertyId::kFollowTail) && list.children.size() != virtual_list.last_child_count) {
+      scroll.offset_y = max_scroll;
+      scroll.target_y = max_scroll;
     }
-    list.last_child_count = list.children.size();
-    list.scroll_y = std::clamp(list.scroll_y, 0.0, max_scroll);
-    list.scroll_target_y = std::clamp(list.scroll_target_y, 0.0, max_scroll);
-    const size_t first = static_cast<size_t>(std::floor(list.scroll_y / list.item_height));
-    const size_t count = static_cast<size_t>(std::ceil(inner_h / list.item_height));
-    list.visible_start = first > list.overdraw ? first - list.overdraw : 0;
-    list.visible_end = std::min(list.children.size(), first + count + list.overdraw + 1);
-    const double bottom_alignment = string_prop(list, "alignment") == "bottom"
-        ? std::max(0.0, inner_h - list.children.size() * list.item_height) : 0.0;
-    for (size_t i = list.visible_start; i < list.visible_end; ++i) {
+    virtual_list.last_child_count = list.children.size();
+    scroll.offset_y = std::clamp(scroll.offset_y, 0.0, max_scroll);
+    scroll.target_y = std::clamp(scroll.target_y, 0.0, max_scroll);
+    const size_t first = static_cast<size_t>(std::floor(scroll.offset_y / virtual_list.item_height));
+    const size_t count = static_cast<size_t>(std::ceil(inner_h / virtual_list.item_height));
+    virtual_list.visible_start = first > virtual_list.overdraw ? first - virtual_list.overdraw : 0;
+    virtual_list.visible_end = std::min(list.children.size(), first + count + virtual_list.overdraw + 1);
+    const double bottom_alignment = string_prop(list, CustomPropertyId::kAlignment) == "bottom"
+        ? std::max(0.0, inner_h - list.children.size() * virtual_list.item_height) : 0.0;
+    for (size_t i = virtual_list.visible_start; i < virtual_list.visible_end; ++i) {
       const double child_y = list.box.y + list.style.padding_top + bottom_alignment +
-                             i * list.item_height - list.scroll_y;
+                             i * virtual_list.item_height - scroll.offset_y;
       calculate_forced_subtree(list.children[i], list.box.x + list.style.padding_left,
-                               child_y, inner_w, list.item_height);
+                               child_y, inner_w, virtual_list.item_height);
     }
   }
 
@@ -316,10 +325,10 @@
     if (child.handler->kind == ElementHandler::Kind::kAnchored) {
       BLPoint anchor{};
       bool found = false;
-      if (const double* anchor_id = prop_as<double>(child, "anchorId")) {
+      if (const double* anchor_id = prop_as<double>(child, CustomPropertyId::kAnchorId)) {
         if (Node* target = node(static_cast<uint64_t>(*anchor_id))) {
-          const std::string side = string_prop(child, "side", "bottom");
-          const std::string align = string_prop(child, "align", "start");
+          const std::string side = string_prop(child, CustomPropertyId::kSide, "bottom");
+          const std::string align = string_prop(child, CustomPropertyId::kAlign, "start");
           anchor.x = align == "center" ? target->box.x + target->box.w * 0.5
                      : align == "end" ? target->box.x + target->box.w : target->box.x;
           anchor.y = side == "top" ? target->box.y
@@ -332,7 +341,7 @@
         }
       }
       if (!found) {
-        if (const BLPoint* position = prop_as<BLPoint>(child, "position")) {
+        if (const BLPoint* position = prop_as<BLPoint>(child, CustomPropertyId::kPosition)) {
           anchor = *position;
           found = true;
         }
@@ -340,9 +349,9 @@
       if (found) {
         x = anchor.x;
         y = anchor.y;
-        const std::string side = string_prop(child, "side", "bottom");
-        const std::string align = string_prop(child, "align", "start");
-        const double gap = number_prop(child, "anchorGap", 4.0);
+        const std::string side = string_prop(child, CustomPropertyId::kSide, "bottom");
+        const std::string align = string_prop(child, CustomPropertyId::kAlign, "start");
+        const double gap = number_prop(child, CustomPropertyId::kAnchorGap, 4.0);
         if (side == "top" || side == "bottom") {
           if (align == "center") x -= child_w * 0.5;
           else if (align == "end") x -= child_w;
@@ -352,7 +361,7 @@
           else if (align == "end") y -= child_h;
           x += side == "left" ? -(child_w + gap) : gap;
         }
-        if (const BLPoint* offset = prop_as<BLPoint>(child, "offset")) {
+        if (const BLPoint* offset = prop_as<BLPoint>(child, CustomPropertyId::kOffset)) {
           x += offset->x;
           y += offset->y;
         }

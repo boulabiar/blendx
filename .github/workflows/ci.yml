@@ -23,6 +23,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev ninja-build python3-pygments python3-yaml
 
       - run: npm ci
+      - run: npm run check:generated
 
       - name: Configure pinned native dependencies
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DBLENDX_BUILD_NODE_ADDON=ON
@@ -65,3 +66,40 @@ jobs:
 
       - name: Verify the packed executable
         run: node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat && ./build/blendx-chat --headless
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev ninja-build python3-pygments python3-yaml
+
+      - run: npm ci
+
+      - name: Configure ASan and UBSan
+        run: cmake -S . -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBLENDX_BUILD_NODE_ADDON=ON -DBLENDX_ENABLE_SANITIZERS=ON
+
+      - name: Build instrumented BlendX targets
+        run: cmake --build build-sanitize --target blendx_native blendx_model_tests -j 4
+
+      - run: npm run build:types
+
+      - name: Run native model tests under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:check_initialization_order=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-sanitize --output-on-failure
+
+      - name: Run the real renderer integration suite under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:check_initialization_order=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: LD_PRELOAD="$(gcc -print-file-name=libasan.so)" node --test tests/native.test.mjs tests/react.test.mjs tests/golden.test.mjs

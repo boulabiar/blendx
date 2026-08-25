@@ -298,6 +298,25 @@ test("scrollbars expose metrics and support thumb dragging", () => {
   native.renderFrame()
 
   native.dispatchPointer("mouseDown", 116, 10, 1)
+  const framesBeforeBurst = native.getStats().frameCount
+  const burstStarted = performance.now()
+  for (let index = 0; index < 200; index += 1) {
+    native.dispatchPointer("mouseMove", 116, 20 + (index % 60), 1)
+    native.poll()
+  }
+  const burstElapsed = performance.now() - burstStarted
+  const burstFrames = native.getStats().frameCount - framesBeforeBurst
+  assert.ok(
+    burstFrames <= Math.ceil(burstElapsed / 8.333) + 2,
+    `motion burst rendered ${burstFrames} frames in ${burstElapsed.toFixed(2)} ms`,
+  )
+  native.setFrameRateLimit(0)
+  const framesBeforeUncappedBurst = native.getStats().frameCount
+  for (let index = 0; index < 10; index += 1) {
+    native.dispatchPointer("mouseMove", 116, 30 + index, 1)
+    native.poll()
+  }
+  assert.equal(native.getStats().frameCount - framesBeforeUncappedBurst, 10)
   native.dispatchPointer("mouseMove", 116, 72, 1)
   native.dispatchPointer("mouseUp", 116, 72, 1)
   assert.ok(latestOffset > 200, latestOffset)
