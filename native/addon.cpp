@@ -112,6 +112,8 @@ class Renderer {
     }
     dirty_ = true;
     force_full_repaint_ = true;
+    yoga_layout_dirty_ = true;
+    special_layout_dirty_ = true;
     last_poll_at_ = std::chrono::steady_clock::now();
     return true;
   }
@@ -151,6 +153,9 @@ class Renderer {
     dirty_regions_.clear();
     dirty_nodes_.clear();
     scrolling_nodes_.clear();
+    scroll_dirty_nodes_.clear();
+    virtual_list_ids_.clear();
+    overlay_ids_.clear();
   }
 
   bool resize_framebuffer(int width, int height, std::string& error) {
@@ -162,6 +167,8 @@ class Renderer {
     }
     dirty_ = true;
     force_full_repaint_ = true;
+    yoga_layout_dirty_ = true;
+    special_layout_dirty_ = true;
     return true;
   }
 
@@ -177,33 +184,42 @@ class Renderer {
     YGNodeSetContext(node.yoga, node.yoga_context.get());
     nodes_[id] = std::move(node);
     configure_yoga_node(nodes_.at(id));
+    if (nodes_.at(id).handler->kind == ElementHandler::Kind::kVirtualList) {
+      virtual_list_ids_.insert(id);
+    }
+    if (nodes_.at(id).handler->kind == ElementHandler::Kind::kAnchored) {
+      overlay_ids_.insert(id);
+    }
     dirty_nodes_.insert(id);
   }
 
-  void destroy_node(uint64_t id, std::vector<uint64_t>& destroyed) {
+  void destroy_node(uint64_t id, std::vector<uint64_t>& destroyed, bool destroying_subtree = false) {
     auto it = nodes_.find(id);
     if (it == nodes_.end()) return;
     add_dirty_box(it->second.box);
     const auto children = it->second.children;
     const uint64_t parent = it->second.parent;
-    if (it->second.yoga) YGNodeRemoveAllChildren(it->second.yoga);
-    for (uint64_t child : children) destroy_node(child, destroyed);
-    if (parent) {
+    if (!destroying_subtree && parent) {
       auto parent_it = nodes_.find(parent);
       if (parent_it != nodes_.end()) {
-        invalidate_layout(parent);
         auto& siblings = parent_it->second.children;
         siblings.erase(std::remove(siblings.begin(), siblings.end(), id), siblings.end());
+        sync_yoga_children(parent);
+        invalidate_layout(parent);
       }
     }
+    if (it->second.yoga) YGNodeRemoveAllChildren(it->second.yoga);
+    for (uint64_t child : children) destroy_node(child, destroyed, true);
     destroyed.push_back(id);
     if (it->second.yoga) {
       YGNodeFree(it->second.yoga);
       it->second.yoga = nullptr;
     }
     nodes_.erase(it);
-    if (parent) sync_yoga_children(parent);
     scrolling_nodes_.erase(id);
+    scroll_dirty_nodes_.erase(id);
+    virtual_list_ids_.erase(id);
+    overlay_ids_.erase(id);
     if (focused_id_ == id) focused_id_ = 0;
     if (hovered_id_ == id) hovered_id_ = 0;
     if (pointer_capture_id_ == id) pointer_capture_id_ = 0;
@@ -259,6 +275,8 @@ class Renderer {
   void set_root(uint64_t id) {
     root_id_ = id;
     force_full_repaint_ = true;
+    yoga_layout_dirty_ = true;
+    special_layout_dirty_ = true;
     dirty_nodes_.insert(id);
   }
   void set_style(uint64_t id, Style style) {
@@ -266,13 +284,21 @@ class Renderer {
     if (!target) return;
     if (target->style.same_layout(style) && target->style.same_visual(style)) return;
     const bool layout_changed = !target->style.same_layout(style);
+    const bool overflow_changed = target->style.overflow != style.overflow;
+    const bool was_detached = target->handler->kind == ElementHandler::Kind::kAnchored ||
+                              target->style.position == Style::Position::kFixed;
     target->style = std::move(style);
+    const bool is_detached = target->handler->kind == ElementHandler::Kind::kAnchored ||
+                             target->style.position == Style::Position::kFixed;
+    if (is_detached) overlay_ids_.insert(id);
+    else overlay_ids_.erase(id);
     configure_yoga_node(*target);
+    if (overflow_changed) refresh_paint_bounds_upwards(id);
     if (layout_changed) {
       // Font and wrapping fields affect intrinsic measurement but are not Yoga
       // style properties, so explicitly invalidate measured leaves.
       mark_yoga_measure_dirty(*target);
-      if (target->parent) sync_yoga_children(target->parent);
+      if (target->parent && was_detached != is_detached) sync_yoga_children(target->parent);
       invalidate_layout(target->parent ? target->parent : id);
     } else {
       invalidate_paint(id);
@@ -288,7 +314,13 @@ class Renderer {
   void set_custom_prop(uint64_t id, const std::string& name, PropValue value) {
     Node* target = node(id);
     if (!target) return;
-    invalidate_layout(id);
+    const bool affects_measure = name == "itemHeight" || name == "estimatedItemHeight" ||
+                                 name == "src" || name == "source" || name == "code" ||
+                                 name == "patch" || name == "minRows";
+    const bool affects_special = name == "overdraw" || name == "alignment" ||
+                                 name == "followTail" || name == "position" ||
+                                 name == "side" || name == "align" || name == "anchor" ||
+                                 name == "offset" || name == "anchorGap" || name == "anchorId";
     if (name == "itemHeight" || name == "estimatedItemHeight") {
       if (const double* number = std::get_if<double>(&value)) {
         target->item_height = std::max(1.0, *number);
@@ -323,7 +355,14 @@ class Renderer {
     } else {
       target->props.insert_or_assign(name, std::move(value));
     }
-    mark_yoga_measure_dirty(*target);
+    if (affects_measure) {
+      mark_yoga_measure_dirty(*target);
+      invalidate_layout(target->parent ? target->parent : id);
+    } else if (affects_special) {
+      invalidate_special(id);
+    } else {
+      invalidate_paint(id);
+    }
   }
   void set_event(uint64_t id, const std::string& kind, bool enabled) {
     Node* target = node(id);
@@ -444,7 +483,7 @@ class Renderer {
     target->scroll_y = std::clamp(offset, 0.0, max_scroll);
     target->scroll_target_y = target->scroll_y;
     scrolling_nodes_.erase(id);
-    invalidate_layout(id);
+    invalidate_scroll(id);
   }
   Box element_box(uint64_t id) const {
     auto it = nodes_.find(id);
@@ -467,6 +506,7 @@ class Renderer {
     return framebuffer_.write_to_file(path.c_str());
   }
   void record_mutations(size_t count) { mutations_last_commit_ = count; }
+  void record_batch_time(double milliseconds) { batch_time_ms_ = milliseconds; }
   void mark_dirty() { dirty_ = true; }
   size_t node_count() const { return nodes_.size(); }
   int width() const { return width_; }
@@ -474,6 +514,10 @@ class Renderer {
   uint64_t frame_count() const { return frame_count_; }
   double render_time_ms() const { return render_time_ms_; }
   double layout_time_ms() const { return layout_time_ms_; }
+  double batch_time_ms() const { return batch_time_ms_; }
+  double yoga_time_ms() const { return yoga_time_ms_; }
+  double box_sync_time_ms() const { return box_sync_time_ms_; }
+  double special_layout_time_ms() const { return special_layout_time_ms_; }
   double paint_time_ms() const { return paint_time_ms_; }
   double present_time_ms() const { return present_time_ms_; }
   uint64_t painted_pixels() const { return painted_pixels_; }
@@ -776,6 +820,8 @@ class Renderer {
       target->scroll_y += remaining * scroll_blend;
       emit_scroll(env, event_callback, id, 0.0);
       dirty_nodes_.insert(id);
+      scroll_dirty_nodes_.insert(id);
+      special_layout_dirty_ = true;
       dirty_ = true;
       ++active;
     }
@@ -788,7 +834,13 @@ class Renderer {
     const auto started = std::chrono::steady_clock::now();
 
     const auto layout_started = std::chrono::steady_clock::now();
-    layout_tree();
+    if (yoga_layout_dirty_ || special_layout_dirty_ || !scroll_dirty_nodes_.empty()) {
+      layout_tree();
+    } else {
+      yoga_time_ms_ = 0.0;
+      box_sync_time_ms_ = 0.0;
+      special_layout_time_ms_ = 0.0;
+    }
     for (uint64_t id : dirty_nodes_) {
       if (Node* target = node(id)) add_dirty_box(target->box);
     }
@@ -800,6 +852,7 @@ class Renderer {
       dirty_regions_.clear();
       dirty_regions_.emplace_back(0, 0, width_, height_);
     }
+    optimize_dirty_regions();
 
     BLContextCreateInfo create_info{};
     create_info.thread_count = threads_;
@@ -871,7 +924,10 @@ class Renderer {
       dirty_regions_.erase(dirty_regions_.begin() + static_cast<std::ptrdiff_t>(i));
     }
     dirty_regions_.push_back(incoming);
-    if (dirty_regions_.size() > 64) force_full_repaint_ = true;
+    // Let later parent damage merge child rectangles before falling back to a
+    // full frame; dense commits can be briefly fragmented while mutations are
+    // still arriving.
+    if (dirty_regions_.size() > 256) force_full_repaint_ = true;
   }
 
   void invalidate_paint(uint64_t id) {
@@ -886,7 +942,53 @@ class Renderer {
     if (target) add_dirty_box(target->box);
     dirty_nodes_.insert(id);
     if (target) mark_yoga_measure_dirty(*target);
+    yoga_layout_dirty_ = true;
+    special_layout_dirty_ = true;
     dirty_ = true;
+  }
+
+  void invalidate_special(uint64_t id) {
+    Node* target = node(id);
+    if (target) add_dirty_box(target->box);
+    dirty_nodes_.insert(id);
+    special_layout_dirty_ = true;
+    dirty_ = true;
+  }
+
+  void invalidate_scroll(uint64_t id) {
+    Node* target = node(id);
+    if (target) add_dirty_box(target->box);
+    dirty_nodes_.insert(id);
+    scroll_dirty_nodes_.insert(id);
+    special_layout_dirty_ = true;
+    dirty_ = true;
+  }
+
+  void optimize_dirty_regions() {
+    if (dirty_regions_.size() <= 24) return;
+    int x0 = width_;
+    int y0 = height_;
+    int x1 = 0;
+    int y1 = 0;
+    uint64_t area = 0;
+    for (const BLRectI& region : dirty_regions_) {
+      x0 = std::min(x0, region.x);
+      y0 = std::min(y0, region.y);
+      x1 = std::max(x1, region.x + region.w);
+      y1 = std::max(y1, region.y + region.h);
+      area += static_cast<uint64_t>(region.w) * static_cast<uint64_t>(region.h);
+    }
+    const uint64_t frame_area = static_cast<uint64_t>(width_) * static_cast<uint64_t>(height_);
+    const uint64_t bounds_area = static_cast<uint64_t>(std::max(0, x1 - x0)) *
+                                 static_cast<uint64_t>(std::max(0, y1 - y0));
+    // Every region performs another clipped tree traversal. Once fragmentation
+    // is high, repainting a larger bounding rectangle is substantially cheaper.
+    dirty_regions_.clear();
+    if (bounds_area > frame_area * 3 / 4 || area > frame_area / 2) {
+      dirty_regions_.emplace_back(0, 0, width_, height_);
+    } else {
+      dirty_regions_.emplace_back(x0, y0, x1 - x0, y1 - y0);
+    }
   }
 
   void detach(uint64_t child) {
@@ -1581,6 +1683,10 @@ class Renderer {
   uint64_t frame_count_ = 0;
   double render_time_ms_ = 0.0;
   double layout_time_ms_ = 0.0;
+  double batch_time_ms_ = 0.0;
+  double yoga_time_ms_ = 0.0;
+  double box_sync_time_ms_ = 0.0;
+  double special_layout_time_ms_ = 0.0;
   double paint_time_ms_ = 0.0;
   double present_time_ms_ = 0.0;
   uint64_t painted_pixels_ = 0;
@@ -1591,6 +1697,11 @@ class Renderer {
   std::vector<BLRectI> dirty_regions_;
   std::unordered_set<uint64_t> dirty_nodes_;
   std::unordered_set<uint64_t> scrolling_nodes_;
+  std::unordered_set<uint64_t> scroll_dirty_nodes_;
+  std::unordered_set<uint64_t> virtual_list_ids_;
+  std::unordered_set<uint64_t> overlay_ids_;
+  bool yoga_layout_dirty_ = true;
+  bool special_layout_dirty_ = true;
   std::vector<double> frame_samples_;
   uint64_t focused_id_ = 0;
   uint64_t hovered_id_ = 0;

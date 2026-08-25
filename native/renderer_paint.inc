@@ -306,7 +306,7 @@
     const bool node_intersects = !damage || intersects(n->box, *damage);
     const bool clips_children = n->handler->kind == ElementHandler::Kind::kVirtualList ||
                                 n->style.overflow != Style::Overflow::kVisible;
-    if (!node_intersects && (clips_children || n->children.empty())) return;
+    if (damage && !intersects(clips_children ? n->box : n->paint_bounds, *damage)) return;
     ++painted_nodes_;
     const uint32_t color = n->style.color.value_or(inherited_color);
     const double font_size = n->style.font_size > 0.0 ? n->style.font_size : inherited_font_size;
@@ -402,4 +402,3 @@
     if (clips_children) context.restore();
     context.restore();
   }
-

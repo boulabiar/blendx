@@ -138,11 +138,13 @@ struct Node {
   std::string text;
   Style style;
   Box box;
+  Box paint_bounds;
   uint64_t parent = 0;
   std::vector<uint64_t> children;
   std::unordered_set<std::string> events;
   std::unordered_map<std::string, PropValue> props;
   double scroll_y = 0.0;
+  double last_applied_scroll_y = 0.0;
   double scroll_target_y = 0.0;
   double content_height = 0.0;
   double item_height = 28.0;

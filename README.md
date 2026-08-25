@@ -76,9 +76,10 @@ npm run visual-stress -- --components=2500 --profile=dense --update=100 --fps=60
 npm run visual-stress:matrix -- --components=1000 --duration=4000
 ```
 
-Its telemetry reports actual application FPS alongside native layout, paint,
-presentation, p50/p95/p99/maximum frame time, rolling 60 Hz budget misses,
-mutations, dirty rectangles, and painted node visits. Headless native frame
+Its telemetry reports actual application FPS alongside batch decoding, Yoga,
+box synchronization, specialized layout, paint, presentation,
+p50/p95/p99/maximum frame time, rolling 60 Hz budget misses, mutations, dirty
+rectangles, and painted node visits. Headless native frame
 times intentionally exclude desktop-compositor cost and React/Hermes work
 outside the native frame; actual FPS makes that distinction visible.
 
@@ -275,9 +276,12 @@ rejected by TypeScript instead of being silently treated like browser CSS.
 React queues mutations such as `createElement`, `appendChild`, `setStyle`, and
 `setText`, then sends one array through N-API per commit. C++ retains those
 nodes and a persistent Yoga node for each layout participant, so unchanged UI
-does not cross N-API again and Yoga can reuse cached layout. A mutation records the old
-damage, layout records the new damage, and overlapping rectangles are merged.
-Painting traverses only nodes intersecting each damage rectangle. The Hermes
+does not cross N-API again and Yoga can reuse cached layout. Paint-only commits
+skip Yoga completely; layout commits synchronize only Yoga branches marked as
+changed. A mutation records the old damage, layout records the new damage, and
+overlapping rectangles are merged. Painting uses cached subtree bounds to skip
+unrelated branches, and highly fragmented damage is consolidated to avoid many
+repeated tree traversals. The Hermes
 host supplies timers, microtask draining, console, `performance.now`, arguments,
 and SIGINT handling. Its event loop blocks in `SDL_WaitEventTimeout` while idle,
 wakes immediately for native input, and uses the next JavaScript timer as its
@@ -288,8 +292,9 @@ The native renderer is organized into `renderer_model.h`,
 `addon.cpp`, and `napi_protocol.inc`. They remain one optimized translation
 unit while keeping feature ownership and review boundaries explicit.
 
-`getStats()` separates `layoutTimeMs`, `paintTimeMs`, and `presentTimeMs`, and
-also reports dirty rectangles, painted pixels/nodes, mutations, rolling
+`getStats()` separates batch decoding, Yoga calculation, box synchronization,
+specialized layout, paint, and presentation, and also reports dirty rectangles,
+painted pixels/nodes, mutations, rolling
 p50/p95/p99/maximum frame times, and the rolling count above the 16.67 ms
 60 Hz frame budget.
 
@@ -321,9 +326,9 @@ session, presentation dominates and should be evaluated separately from CPU
 layout and Blend2D paint time.
 
 The current 5,000-message chat benchmark retains 97 native nodes. A
-representative packed Hermes headless run mounted in about 3.9 ms and updated its
-animated canvas/progress at about a 0.44 ms median and 0.73 ms p95 renderer
-frame time while painting 50 intersecting nodes and 7,480 pixels per update.
+representative packed Hermes headless run mounted in about 5 ms and updated its
+animated canvas/progress at about a 0.13 ms median and 0.67 ms p95 renderer
+frame time while painting 8 intersecting nodes and 7,378 pixels per update.
 See [`CAPABILITIES.md`](CAPABILITIES.md) for the measurement scope and memory
 comparison.
 

@@ -350,6 +350,7 @@ napi_value commit_mutations(napi_env env, napi_callback_info) {
 }
 
 napi_value apply_batch(napi_env env, napi_callback_info info) {
+  const auto batch_started = std::chrono::steady_clock::now();
   auto values = args(env, info, 1);
   if (values.empty()) return undefined(env);
   bool is_array = false;
@@ -397,6 +398,9 @@ napi_value apply_batch(napi_env env, napi_callback_info info) {
     }
   }
   renderer.record_mutations(count);
+  renderer.record_batch_time(std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now() - batch_started)
+                                 .count());
   return undefined(env);
 }
 
@@ -546,6 +550,10 @@ napi_value get_stats(napi_env env, napi_callback_info) {
   set("frameCount", static_cast<double>(renderer.frame_count()));
   set("renderTimeMs", renderer.render_time_ms());
   set("layoutTimeMs", renderer.layout_time_ms());
+  set("batchTimeMs", renderer.batch_time_ms());
+  set("yogaTimeMs", renderer.yoga_time_ms());
+  set("boxSyncTimeMs", renderer.box_sync_time_ms());
+  set("specialLayoutTimeMs", renderer.special_layout_time_ms());
   set("paintTimeMs", renderer.paint_time_ms());
   set("presentTimeMs", renderer.present_time_ms());
   set("paintedPixels", static_cast<double>(renderer.painted_pixels()));

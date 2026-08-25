@@ -1,8 +1,8 @@
 import React from "react"
-import { render } from "../src/index.js"
+import { batchUpdates, render } from "../src/index.js"
 import type { BlendxElement, CanvasCommand, Color, NativeStats } from "../src/index.js"
 
-const { memo, useEffect, useMemo, useRef, useState } = React
+const { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } = React
 
 type Profile = "sparse" | "dense" | "layout" | "paint" | "churn" | "scroll"
 
@@ -58,7 +58,43 @@ function chart(index: number, phase: number, color: Color): CanvasCommand[] {
   return commands
 }
 
-const MetricTile = memo(function MetricTile({ index, phase, profile }: { index: number; phase: number; profile: Profile }) {
+class VersionStore {
+  private versions: number[] = []
+  private listeners = new Map<number, Set<() => void>>()
+
+  resize(size: number): void {
+    this.versions = Array.from({ length: size }, (_, index) => this.versions[index] ?? 0)
+  }
+
+  value(index: number): number { return this.versions[index] ?? 0 }
+
+  subscribe(index: number, listener: () => void): () => void {
+    let listeners = this.listeners.get(index)
+    if (!listeners) this.listeners.set(index, listeners = new Set())
+    listeners.add(listener)
+    return () => {
+      listeners?.delete(listener)
+      if (listeners?.size === 0) this.listeners.delete(index)
+    }
+  }
+
+  advance(indices: number[]): void {
+    for (const index of indices) this.versions[index] = (this.versions[index] ?? 0) + 1
+    batchUpdates(() => {
+      for (const index of indices) {
+        for (const listener of this.listeners.get(index) ?? []) listener()
+      }
+    })
+  }
+}
+
+const versionStore = new VersionStore()
+versionStore.resize(initialScale)
+
+const MetricTile = memo(function MetricTile({ index, profile }: { index: number; profile: Profile }) {
+  const subscribe = useCallback((listener: () => void) => versionStore.subscribe(index, listener), [index])
+  const snapshot = useCallback(() => versionStore.value(index), [index])
+  const phase = useSyncExternalStore(subscribe, snapshot, snapshot)
   const paintPhase = profile === "paint" || profile === "dense" ? phase : 0
   const color = COLORS[(index + paintPhase) % COLORS.length]!
   const value = (20 + ((index * 17 + phase * 13) % 800)) / 10
@@ -123,7 +159,6 @@ function VisualStressApp() {
   const [rate, setRate] = useState(initialRate)
   const [targetFps, setTargetFps] = useState(initialFps)
   const [paused, setPaused] = useState(false)
-  const [versions, setVersions] = useState(() => new Array(initialScale).fill(0) as number[])
   const [liveCount, setLiveCount] = useState(initialScale)
   const [stats, setStats] = useState<NativeStats | null>(null)
   const [actualFps, setActualFps] = useState(0)
@@ -133,7 +168,7 @@ function VisualStressApp() {
   const scrollOffset = useRef(0)
 
   useEffect(() => {
-    setVersions((current) => Array.from({ length: scale }, (_, index) => current[index] ?? 0))
+    versionStore.resize(scale)
     setLiveCount(scale)
     scrollOffset.current = 0
   }, [scale])
@@ -158,16 +193,13 @@ function VisualStressApp() {
         setLiveCount(churnHigh.current ? scale : Math.max(1, Math.floor(scale * 0.8)))
         return
       }
-      setVersions((current) => {
-        const next = current.slice()
-        const count = profile === "dense" ? scale : Math.max(1, Math.ceil(scale * rate / 100))
-        for (let offset = 0; offset < count; offset += 1) {
-          const index = profile === "dense" ? offset : (cursor.current + offset * 37) % scale
-          next[index] = (next[index] ?? 0) + 1
-        }
-        cursor.current = (cursor.current + count * 13 + 1) % scale
-        return next
-      })
+      const count = profile === "dense" ? scale : Math.max(1, Math.ceil(scale * rate / 100))
+      const changed: number[] = []
+      for (let offset = 0; offset < count; offset += 1) {
+        changed.push(profile === "dense" ? offset : (cursor.current + offset * 37) % scale)
+      }
+      cursor.current = (cursor.current + count * 13 + 1) % scale
+      versionStore.advance(changed)
     }, interval)
     return () => clearInterval(timer)
   }, [paused, profile, rate, scale, targetFps])
@@ -189,17 +221,19 @@ function VisualStressApp() {
     return () => clearInterval(timer)
   }, [])
 
-  const indices = useMemo(() => Array.from({ length: liveCount }, (_, index) => index), [liveCount])
-  const rows: React.ReactNode[] = []
-  for (let start = 0; start < indices.length; start += COLUMNS) {
-    const cells: React.ReactNode[] = []
-    for (let column = 0; column < COLUMNS; column += 1) {
-      const index = indices[start + column]
-      if (index === undefined) cells.push(<div key={`empty-${column}`} style={{ width: 0, flexGrow: 1, minWidth: 0 }} />)
-      else cells.push(<MetricTile key={index} index={index} phase={versions[index] ?? 0} profile={profile} />)
+  const rows = useMemo(() => {
+    const result: React.ReactNode[] = []
+    for (let start = 0; start < liveCount; start += COLUMNS) {
+      const cells: React.ReactNode[] = []
+      for (let column = 0; column < COLUMNS; column += 1) {
+        const index = start + column
+        if (index >= liveCount) cells.push(<div key={`empty-${column}`} style={{ width: 0, flexGrow: 1, minWidth: 0 }} />)
+        else cells.push(<MetricTile key={index} index={index} profile={profile} />)
+      }
+      result.push(<div key={start} style={{ width: "100%", height: ROW_HEIGHT, flexShrink: 0, flexDirection: "row", gap: 6 }}>{cells}</div>)
     }
-    rows.push(<div key={start} style={{ width: "100%", height: ROW_HEIGHT, flexShrink: 0, flexDirection: "row", gap: 6 }}>{cells}</div>)
-  }
+    return result
+  }, [liveCount, profile])
 
   const p95 = stats?.frameP95Ms ?? 0
   const effectiveRate = profile === "dense" ? 100 : profile === "churn" ? 20 : rate
@@ -226,8 +260,9 @@ function VisualStressApp() {
             <div style={{ flexDirection: "row", alignItems: "center" }}><text style={{ flexGrow: 1, color: C.text, fontSize: 10 }}>Frame telemetry</text><text style={{ color: budgetColor, fontSize: 12 }}>{actualFps.toFixed(0)} FPS</text></div>
             <Stat label="Frame p50 / p95" value={`${(stats?.frameP50Ms ?? 0).toFixed(2)} / ${p95.toFixed(2)} ms`} color={budgetColor} />
             <Stat label="Frame p99 / maximum" value={`${(stats?.frameP99Ms ?? 0).toFixed(2)} / ${(stats?.frameMaxMs ?? 0).toFixed(2)} ms`} />
-            <Stat label="Layout / paint" value={`${(stats?.layoutTimeMs ?? 0).toFixed(2)} / ${(stats?.paintTimeMs ?? 0).toFixed(2)} ms`} />
-            <Stat label="Presentation" value={`${(stats?.presentTimeMs ?? 0).toFixed(2)} ms`} />
+            <Stat label="Batch decode / Yoga" value={`${(stats?.batchTimeMs ?? 0).toFixed(2)} / ${(stats?.yogaTimeMs ?? 0).toFixed(2)} ms`} />
+            <Stat label="Box sync / special layout" value={`${(stats?.boxSyncTimeMs ?? 0).toFixed(2)} / ${(stats?.specialLayoutTimeMs ?? 0).toFixed(2)} ms`} />
+            <Stat label="Paint / presentation" value={`${(stats?.paintTimeMs ?? 0).toFixed(2)} / ${(stats?.presentTimeMs ?? 0).toFixed(2)} ms`} />
             <Stat label="Native nodes" value={(stats?.nodeCount ?? 0).toLocaleString()} />
             <Stat label="Mutations last commit" value={(stats?.mutationsLastCommit ?? 0).toLocaleString()} />
             <Stat label="Painted visits / retained" value={`${(stats?.paintedNodes ?? 0).toLocaleString()} / ${(stats?.nodeCount ?? 0).toLocaleString()}`} />

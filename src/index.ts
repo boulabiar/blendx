@@ -308,6 +308,11 @@ const reconcilerWithSync = reconciler as typeof reconciler & {
   flushSyncFromReconciler?: (callback: () => void) => void
 }
 
+/** Coalesce state updates originating outside React events into one render pass. */
+export function batchUpdates<T>(callback: () => T): T {
+  return reconciler.batchedUpdates(callback, undefined)
+}
+
 function reportRenderError(error: unknown, info?: { componentStack?: string }): void {
   const detail = error && typeof error === "object" && "stack" in error
     ? String((error as { stack?: unknown }).stack ?? error)

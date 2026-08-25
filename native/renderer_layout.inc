@@ -180,31 +180,72 @@
             static_cast<float>(std::max(0.0, measured.h))};
   }
 
-  void apply_yoga_boxes(uint64_t id, double origin_x, double origin_y, bool detached_root = false) {
+  static Box union_boxes(const Box& a, const Box& b) {
+    if (a.w <= 0.0 || a.h <= 0.0) return b;
+    if (b.w <= 0.0 || b.h <= 0.0) return a;
+    const double x = std::min(a.x, b.x);
+    const double y = std::min(a.y, b.y);
+    const double right = std::max(a.x + a.w, b.x + b.w);
+    const double bottom = std::max(a.y + a.h, b.y + b.h);
+    return {x, y, right - x, bottom - y};
+  }
+
+  void refresh_paint_bounds(Node& current) {
+    current.paint_bounds = current.box;
+    if (current.handler->kind == ElementHandler::Kind::kVirtualList ||
+        current.style.overflow != Style::Overflow::kVisible) return;
+    for (uint64_t child_id : current.children) {
+      if (Node* child = node(child_id)) {
+        current.paint_bounds = union_boxes(current.paint_bounds, child->paint_bounds);
+      }
+    }
+  }
+
+  void refresh_paint_bounds_upwards(uint64_t id) {
+    Node* current = node(id);
+    while (current) {
+      refresh_paint_bounds(*current);
+      current = current->parent ? node(current->parent) : nullptr;
+    }
+  }
+
+  void apply_yoga_boxes(uint64_t id, double origin_x, double origin_y,
+                        bool detached_root = false, bool force = false) {
     Node* current = node(id);
     if (!current || !current->yoga) return;
+    if (!force && !YGNodeGetHasNewLayout(current->yoga)) return;
+    const Box previous = current->box;
     const double left = detached_root ? 0.0 : YGNodeLayoutGetLeft(current->yoga);
     const double top = detached_root ? 0.0 : YGNodeLayoutGetTop(current->yoga);
     current->box = {origin_x + left, origin_y + top,
                     YGNodeLayoutGetWidth(current->yoga), YGNodeLayoutGetHeight(current->yoga)};
-    double content_bottom = current->style.padding_top;
-    for (uint64_t child_id : current->children) {
-      Node* child = node(child_id);
-      if (!child || !yoga_child_participates(*current, *child)) continue;
-      content_bottom = std::max(content_bottom,
-          static_cast<double>(YGNodeLayoutGetTop(child->yoga) + YGNodeLayoutGetHeight(child->yoga)));
+    YGNodeSetHasNewLayout(current->yoga, false);
+    const bool geometry_changed = previous.x != current->box.x || previous.y != current->box.y ||
+                                  previous.w != current->box.w || previous.h != current->box.h;
+    if (current->handler->kind != ElementHandler::Kind::kVirtualList) {
+      double content_bottom = current->style.padding_top;
+      for (uint64_t child_id : current->children) {
+        Node* child = node(child_id);
+        if (!child || !yoga_child_participates(*current, *child)) continue;
+        content_bottom = std::max(content_bottom,
+            static_cast<double>(YGNodeLayoutGetTop(child->yoga) + YGNodeLayoutGetHeight(child->yoga)));
+      }
+      current->content_height = content_bottom + current->style.padding_bottom;
+      const double max_scroll = std::max(0.0, current->content_height - current->box.h);
+      current->scroll_y = std::clamp(current->scroll_y, 0.0, max_scroll);
+      current->scroll_target_y = std::clamp(current->scroll_target_y, 0.0, max_scroll);
     }
-    current->content_height = content_bottom + current->style.padding_bottom;
-    const double max_scroll = std::max(0.0, current->content_height - current->box.h);
-    current->scroll_y = std::clamp(current->scroll_y, 0.0, max_scroll);
-    current->scroll_target_y = std::clamp(current->scroll_target_y, 0.0, max_scroll);
+    const bool scroll_changed = current->last_applied_scroll_y != current->scroll_y;
+    current->last_applied_scroll_y = current->scroll_y;
     const double child_origin_y = current->box.y - current->scroll_y;
     for (uint64_t child_id : current->children) {
       Node* child = node(child_id);
       if (child && yoga_child_participates(*current, *child)) {
-        apply_yoga_boxes(child_id, current->box.x, child_origin_y);
+        apply_yoga_boxes(child_id, current->box.x, child_origin_y, false,
+                         force || geometry_changed || scroll_changed);
       }
     }
+    refresh_paint_bounds(*current);
   }
 
   void calculate_forced_subtree(uint64_t id, double x, double y, double width, double height) {
@@ -213,8 +254,7 @@
     YGNodeStyleSetWidth(child->yoga, static_cast<float>(std::max(0.0, width)));
     YGNodeStyleSetHeight(child->yoga, static_cast<float>(std::max(0.0, height)));
     YGNodeCalculateLayout(child->yoga, static_cast<float>(width), static_cast<float>(height), YGDirectionLTR);
-    apply_yoga_boxes(id, x, y, true);
-    layout_special_descendants(id);
+    apply_yoga_boxes(id, x, y, true, true);
     configure_yoga_node(*child);
   }
 
@@ -323,30 +363,78 @@
     calculate_forced_subtree(child.id, x, y, child_w, child_h);
   }
 
-  void layout_special_descendants(uint64_t id) {
-    Node* parent = node(id);
-    if (!parent) return;
-    if (parent->handler->kind == ElementHandler::Kind::kVirtualList) {
-      layout_virtual_children(*parent);
-      return;
+  size_t logical_depth(uint64_t id) const {
+    size_t depth = 0;
+    auto found = nodes_.find(id);
+    while (found != nodes_.end() && found->second.parent && depth < nodes_.size()) {
+      ++depth;
+      found = nodes_.find(found->second.parent);
     }
-    const std::vector<uint64_t> children = parent->children;
-    for (uint64_t child_id : children) {
-      Node* child = node(child_id);
-      if (!child) continue;
-      if (!yoga_child_participates(*parent, *child)) layout_overlay(*child, *parent);
-      else layout_special_descendants(child_id);
+    return depth;
+  }
+
+  void layout_tracked_specials() {
+    for (uint64_t id : virtual_list_ids_) {
+      if (Node* list = node(id)) layout_virtual_children(*list);
     }
+    std::vector<uint64_t> overlays(overlay_ids_.begin(), overlay_ids_.end());
+    std::sort(overlays.begin(), overlays.end(), [this](uint64_t a, uint64_t b) {
+      return logical_depth(a) < logical_depth(b);
+    });
+    for (uint64_t id : overlays) {
+      Node* child = node(id);
+      Node* parent = child ? node(child->parent) : nullptr;
+      if (child && parent) {
+        layout_overlay(*child, *parent);
+        refresh_paint_bounds_upwards(id);
+      }
+    }
+    for (uint64_t id : virtual_list_ids_) refresh_paint_bounds_upwards(id);
   }
 
   void layout_tree() {
     Node* root = node(root_id_);
     if (!root || !root->yoga) return;
-    YGNodeStyleSetWidth(root->yoga, static_cast<float>(width_));
-    YGNodeStyleSetHeight(root->yoga, static_cast<float>(height_));
-    YGNodeCalculateLayout(root->yoga, static_cast<float>(width_), static_cast<float>(height_), YGDirectionLTR);
-    apply_yoga_boxes(root_id_, 0.0, 0.0, true);
-    layout_special_descendants(root_id_);
+    yoga_time_ms_ = 0.0;
+    box_sync_time_ms_ = 0.0;
+    special_layout_time_ms_ = 0.0;
+    const bool ran_yoga = yoga_layout_dirty_;
+    if (ran_yoga) {
+      const auto yoga_started = std::chrono::steady_clock::now();
+      YGNodeStyleSetWidth(root->yoga, static_cast<float>(width_));
+      YGNodeStyleSetHeight(root->yoga, static_cast<float>(height_));
+      YGNodeCalculateLayout(root->yoga, static_cast<float>(width_), static_cast<float>(height_), YGDirectionLTR);
+      yoga_time_ms_ = std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - yoga_started)
+                          .count();
+      const auto sync_started = std::chrono::steady_clock::now();
+      apply_yoga_boxes(root_id_, 0.0, 0.0, true);
+      box_sync_time_ms_ = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - sync_started)
+                              .count();
+    }
+    if (!ran_yoga) {
+      const auto sync_started = std::chrono::steady_clock::now();
+      for (uint64_t id : scroll_dirty_nodes_) {
+        if (Node* scroller = node(id)) {
+          apply_yoga_boxes(id, scroller->box.x, scroller->box.y, true, true);
+          refresh_paint_bounds_upwards(id);
+        }
+      }
+      box_sync_time_ms_ = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - sync_started)
+                              .count();
+    }
+    if (ran_yoga || special_layout_dirty_) {
+      const auto special_started = std::chrono::steady_clock::now();
+      layout_tracked_specials();
+      special_layout_time_ms_ = std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - special_started)
+                                    .count();
+    }
+    yoga_layout_dirty_ = false;
+    special_layout_dirty_ = false;
+    scroll_dirty_nodes_.clear();
   }
 
   static bool intersects(const Box& box, const BLRectI& rect) {

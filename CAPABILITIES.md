@@ -7,14 +7,14 @@ Latest 5,000-message headless chat benchmark:
 | Measurement | Result |
 |---|---:|
 | Retained native nodes | 97 |
-| Initial React/native mount | ~3.9 ms |
-| Steady renderer p50 | ~0.44 ms |
-| Steady renderer p95 | ~0.73 ms |
-| Worst sampled frame | ~2.1 ms |
-| Layout per update | ~0.20–0.55 ms |
-| Paint per update | ~0.10–0.52 ms |
-| Nodes painted per animation | 50 |
-| Pixels repainted | 7,480 of 955,200 |
+| Initial React/native mount | ~5.0 ms |
+| Steady renderer p50 | ~0.13 ms |
+| Steady renderer p95 | ~0.67 ms |
+| Worst sampled frame | ~2.6 ms |
+| Yoga per paint-only update | 0 ms |
+| Paint per update | ~0.32 ms final sample |
+| Nodes painted per animation | 8 |
+| Pixels repainted | 7,378 of 955,200 |
 | Native mutations per animation | 2 |
 
 The transcript remains lightweight JavaScript data. `VirtualList` mounts only
@@ -38,20 +38,28 @@ headless run on the same development machine measured:
 
 | Profile | Widgets | Native nodes | Actual FPS | Native p50 | Native p95 |
 |---|---:|---:|---:|---:|---:|
-| Sparse 5% | 250 | 2,654 | ~60 | ~0.71 ms | ~0.99 ms |
-| Dense 100% | 250 | 2,654 | ~22 | ~5.80 ms | ~7.07 ms |
-| Sparse 5% | 1,000 | 10,241 | ~52 | ~3.10 ms | ~6.23 ms |
+| Sparse 5%, 120 Hz target | 250 | 2,657 | ~117 | ~0.63 ms | ~1.04 ms |
+| Layout 5%, 120 Hz target | 250 | 2,657 | ~120 | ~1.63 ms | ~1.98 ms |
+| Scroll, 120 Hz target | 250 | 2,657 | ~120 | ~1.44 ms | ~1.84 ms |
+| Dense 100%, 120 Hz target | 250 | 2,657 | ~23 | ~3.97 ms | ~5.20 ms |
+| Sparse 1%, 120 Hz target | 1,000 | 10,244 | ~120 | ~2.01 ms | ~3.00 ms |
+| Sparse 5%, 120 Hz target | 1,000 | 10,244 | ~105–111 | ~1.3–1.6 ms | ~2.0–2.6 ms |
 
 These results use the persistent Yoga layout tree. The earlier custom recursive
-layout pass measured roughly 15 ms at 250 sparse widgets and 54–59 ms at 1,000;
-Yoga reduces the representative 1,000-widget final-frame layout phase to about
-2.2 ms. Dense updates and mount/unmount churn now spend substantially more time
-in React/Hermes mutation production and painting than in native layout.
+layout pass measured roughly 15 ms at 250 sparse widgets and 54–59 ms at 1,000.
+Yoga is now skipped for paint-only commits, box propagation follows Yoga's
+changed-layout flags, and virtual lists/overlays are tracked directly instead
+of discovered with a whole-tree walk. Subtree paint bounds prune unrelated
+rows, while fragmented damage is consolidated when repeated traversal would be
+more expensive. Dense updates now spend substantially more time producing and
+decoding React/Hermes mutations than in native layout or painting.
 
 `actualFps` includes the application update cadence and React/Hermes work;
 native percentiles cover layout, Blend2D paint, and presentation only. Headless
 presentation excludes the desktop compositor. Use identical profile, widget
 count, update share, target rate, and duration when comparing commits.
+`getStats()` additionally separates batch decoding, Yoga calculation, box
+synchronization, and specialized virtual/overlay layout.
 
 ### Memory use
 

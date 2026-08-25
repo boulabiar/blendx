@@ -70,6 +70,33 @@ test("applies one batch and repaints only changed pixels", () => {
   native.shutdown()
 })
 
+test("paint-only custom properties bypass Yoga and box synchronization", () => {
+  native.init({ width: 240, height: 80, headless: true })
+  native.applyBatch([
+    ["create", 1, "div"],
+    ["style", 1, { width: "100%", height: "100%", padding: 8 }],
+    ["create", 2, "progress"],
+    ["style", 2, { width: 180, height: 8 }],
+    ["prop", 2, "value", 10],
+    ["prop", 2, "max", 100],
+    ["append", 1, 2],
+    ["root", 1],
+  ])
+  native.commitMutations()
+  native.renderFrame()
+  const before = native.getElementBox(2)
+
+  native.applyBatch([["prop", 2, "value", 70]])
+  native.commitMutations()
+  native.renderFrame()
+  const stats = native.getStats()
+  assert.equal(stats.yogaTimeMs, 0)
+  assert.equal(stats.boxSyncTimeMs, 0)
+  assert.deepEqual(native.getElementBox(2), before)
+  assert.ok(stats.paintedPixels > 0)
+  native.shutdown()
+})
+
 test("virtual-list lays out and paints only viewport rows", () => {
   native.init({ width: 320, height: 100, headless: true })
   const batch = [

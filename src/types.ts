@@ -179,6 +179,10 @@ export interface NativeStats {
   frameCount: number
   renderTimeMs: number
   layoutTimeMs: number
+  batchTimeMs: number
+  yogaTimeMs: number
+  boxSyncTimeMs: number
+  specialLayoutTimeMs: number
   paintTimeMs: number
   presentTimeMs: number
   paintedPixels: number
