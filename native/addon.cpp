@@ -153,6 +153,7 @@ class Renderer {
     dirty_regions_.clear();
     dirty_nodes_.clear();
     scrolling_nodes_.clear();
+    animations_.clear();
     scroll_dirty_nodes_.clear();
     virtual_list_ids_.clear();
     overlay_ids_.clear();
@@ -217,6 +218,7 @@ class Renderer {
     }
     nodes_.erase(it);
     scrolling_nodes_.erase(id);
+    animations_.erase(id);
     scroll_dirty_nodes_.erase(id);
     virtual_list_ids_.erase(id);
     overlay_ids_.erase(id);
@@ -272,6 +274,13 @@ class Renderer {
     return it == nodes_.end() ? nullptr : &it->second;
   }
 
+  bool copy_style(uint64_t id, Style& result) const {
+    auto found = nodes_.find(id);
+    if (found == nodes_.end()) return false;
+    result = found->second.style;
+    return true;
+  }
+
   void set_root(uint64_t id) {
     root_id_ = id;
     force_full_repaint_ = true;
@@ -308,6 +317,10 @@ class Renderer {
     Node* target = node(id);
     if (!target || target->text == text) return;
     target->text = std::move(text);
+    if (layout_container_for(id)) {
+      invalidate_paint(id);
+      return;
+    }
     mark_yoga_measure_dirty(*target);
     invalidate_layout(target->parent ? target->parent : id);
   }
@@ -349,13 +362,30 @@ class Renderer {
     } else if (name == "modal") {
       if (const bool* enabled = std::get_if<bool>(&value); enabled && *enabled) modal_root_id_ = id;
       else if (modal_root_id_ == id) modal_root_id_ = 0;
+    } else if (name == "animateValue" || name == "animateOpacity") {
+      if (const double* destination = std::get_if<double>(&value)) {
+        NativeAnimation animation;
+        animation.id = id;
+        animation.opacity = name == "animateOpacity";
+        animation.from = animation.opacity ? target->style.opacity
+                                           : number_prop(*target, "value");
+        animation.to = *destination;
+        animation.duration_ms = std::max(1.0, number_prop(*target, "animationDurationMs", 1000.0));
+        animation.loop = bool_prop(*target, "animationLoop");
+        animation.alternate = bool_prop(*target, "animationAlternate");
+        animation.started = std::chrono::steady_clock::now();
+        if (animations_.empty()) next_animation_frame_ = animation.started;
+        animations_.insert_or_assign(id, animation);
+      } else {
+        animations_.erase(id);
+      }
     }
     if (std::holds_alternative<std::monostate>(value)) {
       target->props.erase(name);
     } else {
       target->props.insert_or_assign(name, std::move(value));
     }
-    if (affects_measure) {
+    if (affects_measure && !layout_container_for(id)) {
       mark_yoga_measure_dirty(*target);
       invalidate_layout(target->parent ? target->parent : id);
     } else if (affects_special) {
@@ -539,6 +569,12 @@ class Renderer {
         [budget_ms](double sample) { return sample > budget_ms; }));
   }
   uint32_t threads() const { return threads_; }
+  size_t active_animation_count() const { return animations_.size(); }
+  double next_frame_delay() const {
+    if (animations_.empty()) return 1000.0;
+    return std::max(1.0, std::chrono::duration<double, std::milli>(
+                             next_animation_frame_ - std::chrono::steady_clock::now()).count());
+  }
 
   bool poll(napi_env env, napi_ref event_callback) {
     if (!running_) return false;
@@ -802,6 +838,35 @@ class Renderer {
         }
       }
     }
+    if (!animations_.empty() && now >= next_animation_frame_) {
+      for (auto active = animations_.begin(); active != animations_.end();) {
+        NativeAnimation& animation = active->second;
+        Node* target = node(animation.id);
+        if (!target) {
+          active = animations_.erase(active);
+          continue;
+        }
+        const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                      now - animation.started).count();
+        double cycle = elapsed_ms / animation.duration_ms;
+        const bool finished = !animation.loop && cycle >= 1.0;
+        if (animation.loop) cycle -= std::floor(cycle);
+        else cycle = std::clamp(cycle, 0.0, 1.0);
+        if (animation.loop && animation.alternate && static_cast<uint64_t>(std::floor(
+                elapsed_ms / animation.duration_ms)) % 2u == 1u) cycle = 1.0 - cycle;
+        const double value = animation.from + (animation.to - animation.from) * cycle;
+        add_dirty_box(target->box);
+        if (animation.opacity) target->style.opacity = value;
+        else target->props.insert_or_assign("value", value);
+        dirty_nodes_.insert(animation.id);
+        dirty_ = true;
+        if (finished) active = animations_.erase(active);
+        else ++active;
+      }
+      constexpr auto frame_interval = std::chrono::microseconds(8333);
+      do next_animation_frame_ += frame_interval;
+      while (next_animation_frame_ <= now);
+    }
     const double scroll_blend = 1.0 - std::exp(-18.0 * elapsed);
     for (auto active = scrolling_nodes_.begin(); active != scrolling_nodes_.end();) {
       const uint64_t id = *active;
@@ -935,6 +1000,15 @@ class Renderer {
     if (target) add_dirty_box(target->box);
     dirty_nodes_.insert(id);
     dirty_ = true;
+  }
+
+  Node* layout_container_for(uint64_t id) {
+    Node* current = node(id);
+    while (current) {
+      if (current->style.layout_contain) return current;
+      current = current->parent ? node(current->parent) : nullptr;
+    }
+    return nullptr;
   }
 
   void invalidate_layout(uint64_t id) {
@@ -1697,6 +1771,19 @@ class Renderer {
   std::vector<BLRectI> dirty_regions_;
   std::unordered_set<uint64_t> dirty_nodes_;
   std::unordered_set<uint64_t> scrolling_nodes_;
+  struct NativeAnimation {
+    uint64_t id = 0;
+    bool opacity = false;
+    double from = 0.0;
+    double to = 0.0;
+    double duration_ms = 1000.0;
+    bool loop = false;
+    bool alternate = false;
+    std::chrono::steady_clock::time_point started;
+  };
+  std::unordered_map<uint64_t, NativeAnimation> animations_;
+  std::chrono::steady_clock::time_point next_animation_frame_ =
+      std::chrono::steady_clock::now();
   std::unordered_set<uint64_t> scroll_dirty_nodes_;
   std::unordered_set<uint64_t> virtual_list_ids_;
   std::unordered_set<uint64_t> overlay_ids_;

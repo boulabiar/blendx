@@ -97,6 +97,52 @@ test("paint-only custom properties bypass Yoga and box synchronization", () => {
   native.shutdown()
 })
 
+test("style patches and layout containment preserve incremental layout", () => {
+  native.init({ width: 240, height: 100, headless: true })
+  native.applyBatch([
+    ["create", 1, "div"],
+    ["style", 1, { width: "100%", height: "100%", layoutContain: true }],
+    ["create", 2, "text"],
+    ["style", 2, { width: 120, height: 20, fontSize: 12 }],
+    ["text", 2, "short"],
+    ["append", 1, 2],
+    ["root", 1],
+  ])
+  native.commitMutations()
+  native.renderFrame()
+
+  native.setText(2, "content can change without escaping the fixed containment box")
+  native.commitMutations()
+  native.renderFrame()
+  assert.equal(native.getStats().yogaTimeMs, 0)
+
+  native.setStylePatch(2, [0, 30])
+  native.commitMutations()
+  native.renderFrame()
+  assert.equal(native.getElementBox(2).height, 30)
+  native.shutdown()
+})
+
+test("native value animations register with the 120 Hz frame clock", () => {
+  native.init({ width: 240, height: 80, headless: true })
+  native.applyBatch([
+    ["create", 1, "progress"],
+    ["style", 1, { width: 180, height: 8 }],
+    ["prop", 1, "value", 10],
+    ["prop", 1, "animationDurationMs", 500],
+    ["prop", 1, "animationLoop", true],
+    ["prop", 1, "animateValue", 90],
+    ["root", 1],
+  ])
+  native.commitMutations()
+  native.renderFrame()
+  assert.equal(native.getStats().activeAnimations, 1)
+  assert.ok(native.nextFrameDelay() <= 9)
+  native.setCustomProp(1, "animateValue", null)
+  assert.equal(native.getStats().activeAnimations, 0)
+  native.shutdown()
+})
+
 test("virtual-list lays out and paints only viewport rows", () => {
   native.init({ width: 320, height: 100, headless: true })
   const batch = [

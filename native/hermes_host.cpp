@@ -175,6 +175,7 @@ class Host {
       auto next = Clock::time_point::max();
       for (const auto& [_, timer] : timers_) next = std::min(next, timer.due);
       const auto now = Clock::now();
+      next = std::min(next, now + std::chrono::milliseconds(renderer_frame_delay()));
       if (next > now || next == Clock::time_point::max()) {
         const auto remaining = next == Clock::time_point::max()
                                    ? std::chrono::milliseconds(1000)
@@ -192,6 +193,21 @@ class Host {
   }
 
  private:
+  int renderer_frame_delay() {
+    napi_value global;
+    napi_value renderer;
+    napi_value callback;
+    napi_value result;
+    double delay = 1000.0;
+    if (napi_get_global(env_, &global) == napi_ok &&
+        napi_get_named_property(env_, global, "__blendxNative", &renderer) == napi_ok &&
+        napi_get_named_property(env_, renderer, "nextFrameDelay", &callback) == napi_ok &&
+        napi_call_function(env_, renderer, callback, 0, nullptr, &result) == napi_ok) {
+      napi_get_value_double(env_, result, &delay);
+    }
+    return static_cast<int>(std::clamp(delay, 1.0, 1000.0));
+  }
+
   struct Timer {
     napi_ref callback = nullptr;
     Clock::time_point due;

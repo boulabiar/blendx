@@ -50,6 +50,8 @@ export interface Style {
   cursor?: "default" | "pointer" | "text"
   whiteSpace?: "normal" | "nowrap" | "pre" | "preWrap"
   textOverflow?: "clip" | "ellipsis"
+  /** Keep descendant content changes from invalidating ancestor layout. */
+  layoutContain?: boolean
   /** Native pointer-state overrides. */
   hover?: Omit<Style, "hover" | "active">
   active?: Omit<Style, "hover" | "active">
@@ -137,6 +139,13 @@ export interface HostProps {
   wordDiff?: boolean
   value?: string | number
   max?: number
+  /** Animate a progress/value property on the native frame clock. */
+  animateValue?: number
+  /** Animate opacity on the native frame clock. */
+  animateOpacity?: number
+  animationDurationMs?: number
+  animationLoop?: boolean
+  animationAlternate?: boolean
   placeholder?: string
   readOnly?: boolean
   password?: boolean
@@ -180,6 +189,8 @@ export interface NativeStats {
   renderTimeMs: number
   layoutTimeMs: number
   batchTimeMs: number
+  bridgeTimeMs: number
+  reactCommitTimeMs: number
   yogaTimeMs: number
   boxSyncTimeMs: number
   specialLayoutTimeMs: number
@@ -195,6 +206,9 @@ export interface NativeStats {
   frameMaxMs: number
   /** Frames over the 60 Hz 16.67 ms budget in the rolling sample window. */
   framesOverBudget: number
+  /** Frames over the 120 Hz 8.33 ms budget in the rolling sample window. */
+  framesOver120Budget: number
+  activeAnimations: number
   threads: number
 }
 
@@ -219,6 +233,7 @@ export type NativeMutation =
   | ["remove", number, number]
   | ["insert", number, number, number]
   | ["style", number, Style]
+  | ["stylePatch", number, ...unknown[]]
   | ["text", number, string]
   | ["event", number, string, boolean]
   | ["prop", number, string, unknown]
@@ -233,6 +248,7 @@ export interface NativeRenderer {
   removeChild(parentId: number, childId: number): void
   insertBefore(parentId: number, childId: number, beforeId: number): void
   setStyle(id: number, style: Style): void
+  setStylePatch(id: number, patch: unknown[]): void
   setText(id: number, text: string): void
   setCustomProp(id: number, name: string, value: unknown): void
   setEventListener(id: number, eventType: string, enabled: boolean): void
@@ -253,6 +269,7 @@ export interface NativeRenderer {
   captureScreenshot(path: string): void
   getSelectedText(): string
   getAccessibilityTree(): AccessibilityNode[]
+  nextFrameDelay(): number
 }
 
 export interface BlendxRoot {

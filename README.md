@@ -77,8 +77,9 @@ npm run visual-stress:matrix -- --components=1000 --duration=4000
 ```
 
 Its telemetry reports actual application FPS alongside batch decoding, Yoga,
-box synchronization, specialized layout, paint, presentation,
-p50/p95/p99/maximum frame time, rolling 60 Hz budget misses, mutations, dirty
+box synchronization, specialized layout, React commit/bridge time, paint,
+presentation, p50/p95/p99/maximum frame time, rolling 60 and 120 Hz budget
+misses, active native animations, mutations, dirty
 rectangles, and painted node visits. Headless native frame
 times intentionally exclude desktop-compositor cost and React/Hermes work
 outside the native frame; actual FPS makes that distinction visible.
@@ -274,7 +275,8 @@ rejected by TypeScript instead of being silently treated like browser CSS.
 ## Architecture notes
 
 React queues mutations such as `createElement`, `appendChild`, `setStyle`, and
-`setText`, then sends one array through N-API per commit. C++ retains those
+`setText`, then sends one array through N-API per commit. Stable-shaped style
+updates are encoded as compact numeric field patches. C++ retains those
 nodes and a persistent Yoga node for each layout participant, so unchanged UI
 does not cross N-API again and Yoga can reuse cached layout. Paint-only commits
 skip Yoga completely; layout commits synchronize only Yoga branches marked as
@@ -285,7 +287,12 @@ repeated tree traversals. The Hermes
 host supplies timers, microtask draining, console, `performance.now`, arguments,
 and SIGINT handling. Its event loop blocks in `SDL_WaitEventTimeout` while idle,
 wakes immediately for native input, and uses the next JavaScript timer as its
-deadline rather than polling every 8 ms.
+deadline rather than polling every 8 ms. Native value/opacity animations use an
+absolute 120 Hz deadline and update damage without a React commit.
+
+`layoutContain: true` is an explicit performance contract for fixed geometry:
+descendant content and intrinsic-source changes retain their existing boxes and
+invalidate paint only. Geometry/style changes still invalidate Yoga normally.
 
 The native renderer is organized into `renderer_model.h`,
 `renderer_layout.inc`, `renderer_paint.inc`, the input/event core in
@@ -295,8 +302,8 @@ unit while keeping feature ownership and review boundaries explicit.
 `getStats()` separates batch decoding, Yoga calculation, box synchronization,
 specialized layout, paint, and presentation, and also reports dirty rectangles,
 painted pixels/nodes, mutations, rolling
-p50/p95/p99/maximum frame times, and the rolling count above the 16.67 ms
-60 Hz frame budget.
+p50/p95/p99/maximum frame times, and rolling counts above both the 16.67 ms
+60 Hz and 8.33 ms 120 Hz frame budgets.
 
 Blend2D chooses its SIMD implementation internally. BlendX deliberately does
 not contain handwritten intrinsics.
@@ -343,6 +350,6 @@ cached on first use.
 This is not yet a complete desktop toolkit. The next substantial pieces are a
 full flexbox implementation, automatic variable-row measurement, text shaping
 across fallback fonts and bidi, OS accessibility adapters, candidate-window
-IME integration, native animation timelines, and production-grade
+IME integration, general transform/compositor animations, and production-grade
 CommonMark/syntax highlighting. The current Markdown and code painters
 intentionally cover the demo subset rather than replacing complete parsers.

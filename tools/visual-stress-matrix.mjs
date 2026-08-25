@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 
-const profiles = ["sparse", "dense", "layout", "paint", "churn", "scroll"]
+const profiles = ["sparse", "dense", "layout", "paint", "churn", "scroll", "native"]
 const forwarded = process.argv.slice(2)
 const hasComponents = forwarded.some((value) => value.startsWith("--components="))
 const hasDuration = forwarded.some((value) => value.startsWith("--duration="))

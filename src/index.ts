@@ -42,6 +42,9 @@ let currentPriority = 0
 const instances = new Map<number, Instance>()
 const hoveredInstances = new Set<number>()
 const activeInstances = new Set<number>()
+let lastBridgeTimeMs = 0
+let reactCommitStartedAt = 0
+let lastReactCommitTimeMs = 0
 
 function native(): NativeRenderer {
   if (!activeRenderer) throw new Error("BlendX renderer is not active")
@@ -69,7 +72,9 @@ function createBatchedRenderer(raw: NativeRenderer): NativeRenderer {
   let pending: NativeMutation[] = []
   const flush = (): boolean => {
     if (pending.length === 0) return false
+    const started = performance.now()
     raw.applyBatch(pending)
+    lastBridgeTimeMs = performance.now() - started
     pending = []
     return true
   }
@@ -82,6 +87,7 @@ function createBatchedRenderer(raw: NativeRenderer): NativeRenderer {
     removeChild: (parent, child) => pending.push(["remove", parent, child]),
     insertBefore: (parent, child, before) => pending.push(["insert", parent, child, before]),
     setStyle: (id, style) => pending.push(["style", id, style]),
+    setStylePatch: (id, patch) => pending.push(["stylePatch", id, ...patch]),
     setText: (id, text) => pending.push(["text", id, text]),
     setCustomProp: (id, name, value) => pending.push(["prop", id, name, value]),
     setEventListener: (id, type, enabled) => pending.push(["event", id, type, enabled]),
@@ -91,7 +97,11 @@ function createBatchedRenderer(raw: NativeRenderer): NativeRenderer {
     setEventCallback: raw.setEventCallback.bind(raw),
     poll: raw.poll.bind(raw),
     renderFrame: raw.renderFrame.bind(raw),
-    getStats: raw.getStats.bind(raw),
+    getStats: () => ({
+      ...raw.getStats(),
+      bridgeTimeMs: lastBridgeTimeMs,
+      reactCommitTimeMs: lastReactCommitTimeMs,
+    }),
     focusElement: raw.focusElement.bind(raw),
     dispatchPointer: raw.dispatchPointer.bind(raw),
     dispatchKey: raw.dispatchKey.bind(raw),
@@ -101,6 +111,7 @@ function createBatchedRenderer(raw: NativeRenderer): NativeRenderer {
     captureScreenshot: raw.captureScreenshot.bind(raw),
     getSelectedText: raw.getSelectedText.bind(raw),
     getAccessibilityTree: raw.getAccessibilityTree.bind(raw),
+    nextFrameDelay: raw.nextFrameDelay.bind(raw),
   }
 }
 
@@ -168,11 +179,52 @@ function stylesEqual(a: HostProps["style"], b: HostProps["style"]): boolean {
   return aKeys.length === bKeys.length && aKeys.every((key) => a[key] === b[key])
 }
 
+const stylePropertyIds: Partial<Record<keyof NonNullable<HostProps["style"]>, number>> = {
+  height: 0,
+  padding: 1,
+  gap: 2,
+  backgroundColor: 3,
+  borderColor: 4,
+  color: 5,
+  opacity: 6,
+  borderRadius: 7,
+  width: 8,
+  borderWidth: 9,
+  fontSize: 10,
+  lineHeight: 11,
+  flexGrow: 12,
+  flexShrink: 13,
+  layoutContain: 14,
+}
+
+function encodeStylePatch(
+  previous: HostProps["style"],
+  next: HostProps["style"],
+): unknown[] | null {
+  if (!previous || !next) return null
+  const previousKeys = Object.keys(previous) as Array<keyof NonNullable<typeof previous>>
+  const nextKeys = Object.keys(next) as Array<keyof NonNullable<typeof next>>
+  if (previousKeys.length !== nextKeys.length ||
+      previousKeys.some((key) => !Object.prototype.hasOwnProperty.call(next, key))) return null
+  const patch: unknown[] = []
+  for (const key of nextKeys) {
+    if (previous[key] === next[key]) continue
+    if (key === "padding" && (next.paddingHorizontal !== undefined || next.paddingVertical !== undefined ||
+        next.paddingLeft !== undefined || next.paddingRight !== undefined ||
+        next.paddingTop !== undefined || next.paddingBottom !== undefined)) return null
+    const propertyId = stylePropertyIds[key]
+    if (propertyId === undefined) return null
+    patch.push(propertyId, next[key])
+  }
+  return patch
+}
+
 function syncCustomProps(id: number, oldProps: HostProps | null, props: HostProps): void {
   for (const name of [
     "itemHeight", "overdraw", "estimatedItemHeight", "alignment", "followTail", "src", "alt", "objectFit",
     "commands", "source", "code", "language", "showLineNumbers", "showHeader",
-    "patch", "wordDiff", "value", "max", "placeholder", "readOnly", "password", "selectable", "minRows",
+    "patch", "wordDiff", "value", "max", "animationDurationMs", "animationLoop", "animationAlternate",
+    "animateValue", "animateOpacity", "placeholder", "readOnly", "password", "selectable", "minRows",
     "maxRows", "autoFocus", "position", "side", "align", "anchor", "offset",
     "anchorGap", "anchorId", "tabIndex", "disabled", "modal", "accessibilityRole",
     "accessibilityLabel", "accessibilityDescription", "accessibilityValue",
@@ -232,8 +284,11 @@ const hostConfig = {
   },
   insertInContainerBefore(): void {},
 
-  prepareForCommit(): null { return null },
-  resetAfterCommit(): void { native().commitMutations() },
+  prepareForCommit(): null { reactCommitStartedAt = performance.now(); return null },
+  resetAfterCommit(): void {
+    native().commitMutations()
+    lastReactCommitTimeMs = performance.now() - reactCommitStartedAt
+  },
   getRootHostContext(): Record<string, never> { return {} },
   getChildHostContext(): Record<string, never> { return {} },
   getPublicInstance(instance: Instance): Instance { return instance },
@@ -247,7 +302,11 @@ const hostConfig = {
   commitMount(): void {},
   commitUpdate(instance: Instance, _type: string, oldProps: HostProps, newProps: HostProps): void {
     if (!stylesEqual(oldProps.style, newProps.style)) {
-      native().setStyle(instance.id, resolvedStyle(instance.id, newProps.style) ?? {})
+      const previous = resolvedStyle(instance.id, oldProps.style)
+      const next = resolvedStyle(instance.id, newProps.style)
+      const patch = encodeStylePatch(previous, next)
+      if (patch === null) native().setStyle(instance.id, next ?? {})
+      else if (patch.length > 0) native().setStylePatch(instance.id, patch)
     }
     syncEvents(instance.id, oldProps, newProps)
     syncCustomProps(instance.id, oldProps, newProps)

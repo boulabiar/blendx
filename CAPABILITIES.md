@@ -41,9 +41,10 @@ headless run on the same development machine measured:
 | Sparse 5%, 120 Hz target | 250 | 2,657 | ~117 | ~0.63 ms | ~1.04 ms |
 | Layout 5%, 120 Hz target | 250 | 2,657 | ~120 | ~1.63 ms | ~1.98 ms |
 | Scroll, 120 Hz target | 250 | 2,657 | ~120 | ~1.44 ms | ~1.84 ms |
-| Dense 100%, 120 Hz target | 250 | 2,657 | ~23 | ~3.97 ms | ~5.20 ms |
+| Dense 100%, 120 Hz target | 250 | 2,666 | ~23 | ~1.86 ms | ~2.51 ms |
+| Native progress, 120 Hz target | 250 | 2,666 | ~123* | ~1.11 ms | ~1.45 ms |
 | Sparse 1%, 120 Hz target | 1,000 | 10,244 | ~120 | ~2.01 ms | ~3.00 ms |
-| Sparse 5%, 120 Hz target | 1,000 | 10,244 | ~105–111 | ~1.3–1.6 ms | ~2.0–2.6 ms |
+| Sparse 5%, 120 Hz target | 1,000 | 10,253 | ~115 | ~0.18 ms | ~0.73 ms |
 
 These results use the persistent Yoga layout tree. The earlier custom recursive
 layout pass measured roughly 15 ms at 250 sparse widgets and 54–59 ms at 1,000.
@@ -51,15 +52,22 @@ Yoga is now skipped for paint-only commits, box propagation follows Yoga's
 changed-layout flags, and virtual lists/overlays are tracked directly instead
 of discovered with a whole-tree walk. Subtree paint bounds prune unrelated
 rows, while fragmented damage is consolidated when repeated traversal would be
-more expensive. Dense updates now spend substantially more time producing and
-decoding React/Hermes mutations than in native layout or painting.
+more expensive. Stable-shaped style updates use numeric patches, and
+`layoutContain` keeps content-only changes inside fixed card geometry. Dense
+updates now spend substantially more time producing React/Hermes subtrees than
+in native layout or painting.
+
+The native profile animates 250 progress values without React commits. Its
+reported ~123 FPS comprises the 120 Hz native timeline plus occasional
+telemetry commits; it has 250 active animations and zero rolling 8.33 ms misses.
 
 `actualFps` includes the application update cadence and React/Hermes work;
 native percentiles cover layout, Blend2D paint, and presentation only. Headless
 presentation excludes the desktop compositor. Use identical profile, widget
 count, update share, target rate, and duration when comparing commits.
 `getStats()` additionally separates batch decoding, Yoga calculation, box
-synchronization, and specialized virtual/overlay layout.
+synchronization, specialized virtual/overlay layout, synchronous bridge and
+React commit duration, active animations, and both 60/120 Hz budget misses.
 
 ### Memory use
 
@@ -247,8 +255,9 @@ Implemented:
 - Pointer capture exists for sliders and scrollbars but has no public generic API
 - No double-click event or general drag-and-drop primitive
 - The `anchor` named-point property is accepted but not yet used
-- `motion` is declarative and frame-driven from React rather than a native
-  compositor/timeline
+- Progress values and opacity can use the native 120 Hz timeline through
+  `animateValue`/`animateOpacity`; general `motion` transforms remain
+  frame-driven from React
 
 ### Layout
 
@@ -268,4 +277,5 @@ practical subset of Yoga/CSS:
 The implemented examples remain GPUix-inspired adaptations rather than
 source-compatible execution of GPUix applications. The deepest remaining work
 is platform accessibility, automatic variable-row measurement, full
-CommonMark/GFM, font fallback/bidi shaping, and native animation timelines.
+CommonMark/GFM, font fallback/bidi shaping, and a general transform/compositor
+animation timeline.

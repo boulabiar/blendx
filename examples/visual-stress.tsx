@@ -4,7 +4,7 @@ import type { BlendxElement, CanvasCommand, Color, NativeStats } from "../src/in
 
 const { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } = React
 
-type Profile = "sparse" | "dense" | "layout" | "paint" | "churn" | "scroll"
+type Profile = "sparse" | "dense" | "layout" | "paint" | "churn" | "scroll" | "native"
 
 const C = {
   canvas: "#070b11" as const,
@@ -29,6 +29,7 @@ const PROFILES: Array<{ value: Profile; label: string; detail: string }> = [
   { value: "paint", label: "Paint", detail: "Charts, progress and colors" },
   { value: "churn", label: "Churn", detail: "Mount and remove 20 percent" },
   { value: "scroll", label: "Scroll", detail: "Move the retained grid" },
+  { value: "native", label: "Native", detail: "Animate progress without React commits" },
 ]
 const SCALES = [250, 1_000, 2_500, 5_000]
 const RATES = [1, 5, 25, 100]
@@ -113,6 +114,7 @@ const MetricTile = memo(function MetricTile({ index, profile }: { index: number;
         borderWidth: 1,
         borderColor: phase % 5 === 0 ? color : C.border,
         borderRadius: 9,
+        layoutContain: true,
       }}
     >
       <div style={{ height: 15, flexShrink: 0, flexDirection: "row", alignItems: "center" }}>
@@ -123,7 +125,15 @@ const MetricTile = memo(function MetricTile({ index, profile }: { index: number;
         <text style={{ color: C.text, fontSize: 15 }}>{value.toFixed(1)}</text>
         <text style={{ marginLeft: 4, marginBottom: 2, color: C.faint, fontSize: 6 }}>ms</text>
       </div>
-      <progress value={value} max={100} style={{ width: "100%", height: 4, flexShrink: 0, color, backgroundColor: "#273245", borderRadius: 2 }} />
+      <progress
+        value={value}
+        max={100}
+        animateValue={profile === "native" ? 90 - (index % 70) : undefined}
+        animationDurationMs={profile === "native" ? 700 + (index % 11) * 70 : undefined}
+        animationLoop={profile === "native" ? true : undefined}
+        animationAlternate={profile === "native" ? true : undefined}
+        style={{ width: "100%", height: 4, flexShrink: 0, color, backgroundColor: "#273245", borderRadius: 2 }}
+      />
       <canvas commands={commands} style={{ width: "100%", height: 20, flexShrink: 0 }} />
     </div>
   )
@@ -180,6 +190,7 @@ function VisualStressApp() {
 
   useEffect(() => {
     if (paused) return
+    if (profile === "native") return
     const interval = profile === "churn" ? 180 : Math.max(4, Math.round(1000 / targetFps))
     const timer = setInterval(() => {
       if (profile === "scroll") {
@@ -261,6 +272,7 @@ function VisualStressApp() {
             <Stat label="Frame p50 / p95" value={`${(stats?.frameP50Ms ?? 0).toFixed(2)} / ${p95.toFixed(2)} ms`} color={budgetColor} />
             <Stat label="Frame p99 / maximum" value={`${(stats?.frameP99Ms ?? 0).toFixed(2)} / ${(stats?.frameMaxMs ?? 0).toFixed(2)} ms`} />
             <Stat label="Batch decode / Yoga" value={`${(stats?.batchTimeMs ?? 0).toFixed(2)} / ${(stats?.yogaTimeMs ?? 0).toFixed(2)} ms`} />
+            <Stat label="React commit / bridge" value={`${(stats?.reactCommitTimeMs ?? 0).toFixed(2)} / ${(stats?.bridgeTimeMs ?? 0).toFixed(2)} ms`} />
             <Stat label="Box sync / special layout" value={`${(stats?.boxSyncTimeMs ?? 0).toFixed(2)} / ${(stats?.specialLayoutTimeMs ?? 0).toFixed(2)} ms`} />
             <Stat label="Paint / presentation" value={`${(stats?.paintTimeMs ?? 0).toFixed(2)} / ${(stats?.presentTimeMs ?? 0).toFixed(2)} ms`} />
             <Stat label="Native nodes" value={(stats?.nodeCount ?? 0).toLocaleString()} />
@@ -268,6 +280,7 @@ function VisualStressApp() {
             <Stat label="Painted visits / retained" value={`${(stats?.paintedNodes ?? 0).toLocaleString()} / ${(stats?.nodeCount ?? 0).toLocaleString()}`} />
             <Stat label="Dirty rectangles" value={String(stats?.dirtyRectCount ?? 0)} />
             <Stat label="Over 16.67 ms (rolling)" value={String(stats?.framesOverBudget ?? 0)} color={(stats?.framesOverBudget ?? 0) ? C.red : C.green} />
+            <Stat label="Over 8.33 ms / animations" value={`${stats?.framesOver120Budget ?? 0} / ${stats?.activeAnimations ?? 0}`} color={(stats?.framesOver120Budget ?? 0) ? C.red : C.green} />
           </div>
 
           <div style={{ padding: 11, gap: 6, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 11 }}>

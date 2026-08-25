@@ -229,7 +229,48 @@ Style style_from_js(napi_env env, napi_value object) {
     else if (justify == "end" || justify == "flex-end") style.justify = Style::Justify::kEnd;
     else if (justify == "spaceBetween" || justify == "space-between") style.justify = Style::Justify::kSpaceBetween;
   }
+  if (auto value = property(env, object, "layoutContain")) {
+    style.layout_contain = boolean(env, value);
+  }
   return style;
+}
+
+void apply_style_property(napi_env env, Style& style, uint32_t property_id, napi_value value) {
+  switch (property_id) {
+    case 0: style.height = dimension(env, value); break;
+    case 1:
+      style.padding_left = style.padding_right = style.padding_top =
+          style.padding_bottom = number(env, value);
+      break;
+    case 2: style.gap = number(env, value); break;
+    case 3: style.background = color(env, value); break;
+    case 4: style.border_color = color(env, value); break;
+    case 5: style.color = color(env, value); break;
+    case 6: style.opacity = number(env, value, 1.0); break;
+    case 7: style.border_radius = number(env, value); break;
+    case 8: style.width = dimension(env, value); break;
+    case 9: style.border_width = number(env, value); break;
+    case 10: style.font_size = number(env, value, 16.0); break;
+    case 11: style.line_height = number(env, value); break;
+    case 12: style.flex_grow = number(env, value); break;
+    case 13: style.flex_shrink = number(env, value, 1.0); break;
+    case 14: style.layout_contain = boolean(env, value); break;
+    default: break;
+  }
+}
+
+void apply_style_patch(napi_env env, uint64_t id, napi_value operation,
+                       uint32_t start, uint32_t length) {
+  Style style;
+  if (!renderer.copy_style(id, style)) return;
+  for (uint32_t index = start; index + 1 < length; index += 2) {
+    napi_value property_id;
+    napi_value value;
+    napi_get_element(env, operation, index, &property_id);
+    napi_get_element(env, operation, index + 1, &value);
+    apply_style_property(env, style, static_cast<uint32_t>(number(env, property_id)), value);
+  }
+  renderer.set_style(id, std::move(style));
 }
 
 napi_value undefined(napi_env env) {
@@ -313,6 +354,18 @@ napi_value set_style(napi_env env, napi_callback_info info) {
   return undefined(env);
 }
 
+napi_value set_style_patch(napi_env env, napi_callback_info info) {
+  auto values = args(env, info, 2);
+  if (values.size() != 2) return undefined(env);
+  bool is_array = false;
+  napi_is_array(env, values[1], &is_array);
+  if (!is_array) return undefined(env);
+  uint32_t length = 0;
+  napi_get_array_length(env, values[1], &length);
+  apply_style_patch(env, id_arg(env, values[0]), values[1], 0, length);
+  return undefined(env);
+}
+
 napi_value set_text(napi_env env, napi_callback_info info) {
   auto values = args(env, info, 2);
   if (values.size() == 2) {
@@ -386,6 +439,8 @@ napi_value apply_batch(napi_env env, napi_callback_info info) {
       renderer.insert_before(id_arg(env, at(1)), id_arg(env, at(2)), id_arg(env, at(3)));
     } else if (kind == "style" && length >= 3) {
       renderer.set_style(id_arg(env, at(1)), style_from_js(env, at(2)));
+    } else if (kind == "stylePatch" && length >= 4) {
+      apply_style_patch(env, id_arg(env, at(1)), operation, 2, length);
     } else if (kind == "text" && length >= 3) {
       renderer.set_text(id_arg(env, at(1)), string(env, at(2)));
     } else if (kind == "event" && length >= 4) {
@@ -551,6 +606,8 @@ napi_value get_stats(napi_env env, napi_callback_info) {
   set("renderTimeMs", renderer.render_time_ms());
   set("layoutTimeMs", renderer.layout_time_ms());
   set("batchTimeMs", renderer.batch_time_ms());
+  set("bridgeTimeMs", 0.0);
+  set("reactCommitTimeMs", 0.0);
   set("yogaTimeMs", renderer.yoga_time_ms());
   set("boxSyncTimeMs", renderer.box_sync_time_ms());
   set("specialLayoutTimeMs", renderer.special_layout_time_ms());
@@ -565,7 +622,15 @@ napi_value get_stats(napi_env env, napi_callback_info) {
   set("frameP99Ms", renderer.frame_percentile(0.99));
   set("frameMaxMs", renderer.frame_percentile(1.0));
   set("framesOverBudget", static_cast<double>(renderer.frames_over_budget(1000.0 / 60.0)));
+  set("framesOver120Budget", static_cast<double>(renderer.frames_over_budget(1000.0 / 120.0)));
+  set("activeAnimations", static_cast<double>(renderer.active_animation_count()));
   set("threads", renderer.threads());
+  return result;
+}
+
+napi_value next_frame_delay(napi_env env, napi_callback_info) {
+  napi_value result;
+  napi_create_double(env, renderer.next_frame_delay(), &result);
   return result;
 }
 
@@ -579,6 +644,7 @@ napi_value module_init(napi_env env, napi_value exports) {
       {"removeChild", nullptr, remove_child, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"insertBefore", nullptr, insert_before, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"setStyle", nullptr, set_style, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"setStylePatch", nullptr, set_style_patch, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"setText", nullptr, set_text, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"setCustomProp", nullptr, set_custom_prop, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"setEventListener", nullptr, set_event_listener, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -598,6 +664,7 @@ napi_value module_init(napi_env env, napi_value exports) {
       {"getSelectedText", nullptr, get_selected_text, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"getAccessibilityTree", nullptr, get_accessibility_tree, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"getStats", nullptr, get_stats, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"nextFrameDelay", nullptr, next_frame_delay, nullptr, nullptr, nullptr, napi_default, nullptr},
   };
   napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
   return exports;

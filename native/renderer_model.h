@@ -60,6 +60,7 @@ struct Style {
   std::optional<double> top;
   std::optional<double> bottom;
   double z_index = 0.0;
+  bool layout_contain = false;
   Dimension max_width;
   Dimension max_height;
 
@@ -78,7 +79,8 @@ struct Style {
            position == other.position && left == other.left && right == other.right &&
            top == other.top && bottom == other.bottom && align_items == other.align_items &&
            justify == other.justify && same_dimension(max_width, other.max_width) &&
-           same_dimension(max_height, other.max_height) && white_space == other.white_space;
+           same_dimension(max_height, other.max_height) && white_space == other.white_space &&
+           layout_contain == other.layout_contain;
   }
 
   bool same_visual(const Style& other) const {
