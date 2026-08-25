@@ -38,16 +38,15 @@ headless run on the same development machine measured:
 
 | Profile | Widgets | Native nodes | Actual FPS | Native p50 | Native p95 |
 |---|---:|---:|---:|---:|---:|
-| Sparse 5% | 250 | 2,654 | ~51 | ~15.2 ms | ~15.6 ms |
-| Dense 100% | 250 | 2,654 | ~16 | ~18.2 ms | ~25.1 ms |
-| Sparse 5% | 1,000 | 10,241 | ~13–15 | ~54–59 ms | ~55–61 ms |
+| Sparse 5% | 250 | 2,654 | ~60 | ~0.71 ms | ~0.99 ms |
+| Dense 100% | 250 | 2,654 | ~22 | ~5.80 ms | ~7.07 ms |
+| Sparse 5% | 1,000 | 10,241 | ~52 | ~3.10 ms | ~6.23 ms |
 
-This result is intentionally different from the 97-node chat measurement. The
-current layout pass visits the complete retained tree after a relevant commit,
-so layout dominates at thousands of ordinary retained components even when
-only 5% change. Dirty-region painting still limits pixels, but does not avoid
-that global layout cost. Incremental dirty-subtree layout is therefore the most
-important performance optimization exposed by this benchmark.
+These results use the persistent Yoga layout tree. The earlier custom recursive
+layout pass measured roughly 15 ms at 250 sparse widgets and 54–59 ms at 1,000;
+Yoga reduces the representative 1,000-widget final-frame layout phase to about
+2.2 ms. Dense updates and mount/unmount churn now spend substantially more time
+in React/Hermes mutation production and painting than in native layout.
 
 `actualFps` includes the application update cadence and React/Hermes work;
 native percentiles cover layout, Blend2D paint, and presentation only. Headless
@@ -245,7 +244,8 @@ Implemented:
 
 ### Layout
 
-This is a practical flex subset, not Yoga or full CSS:
+Ordinary flex layout is backed by Yoga, but BlendX currently exposes only a
+practical subset of Yoga/CSS:
 
 - No wrapping
 - No baseline alignment

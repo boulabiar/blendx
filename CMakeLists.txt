@@ -90,6 +90,18 @@ else()
   FetchContent_MakeAvailable(blend2d)
 endif()
 
+set(YOGA_ROOT "" CACHE PATH "Use an existing Yoga source checkout instead of downloading it")
+if(YOGA_ROOT)
+  add_subdirectory("${YOGA_ROOT}/yoga" "${CMAKE_BINARY_DIR}/yoga" EXCLUDE_FROM_ALL)
+else()
+  FetchContent_Populate(yoga
+    QUIET
+    URL https://codeload.github.com/facebook/yoga/tar.gz/433d4634d11c944bc9e64cfc90927fb10c0525b9
+    URL_HASH SHA256=ac2ec0f415422a3ce40c46dede893d730ac84199ca9be2ea4ebe2fce2830a77d)
+  # Add only the library. Yoga's top-level project also enables its own tests.
+  add_subdirectory("${yoga_SOURCE_DIR}/yoga" "${CMAKE_BINARY_DIR}/yoga" EXCLUDE_FROM_ALL)
+endif()
+
 set(HERMES_ROOT "" CACHE PATH "Use an existing Hermes source checkout instead of downloading it")
 set(HERMES_ENABLE_TEST_SUITE OFF CACHE BOOL "" FORCE)
 set(HERMES_ENABLE_DEBUGGER OFF CACHE BOOL "" FORCE)
@@ -130,6 +142,7 @@ target_include_directories(blendx_hermes PRIVATE
 target_link_libraries(blendx_hermes PRIVATE
   hermesNapi
   hermesvmlean_a
+  yogacore
   blend2d::blend2d
   ${BLENDX_SDL_TARGET})
 blendx_enable_warnings(blendx_hermes)
@@ -146,7 +159,7 @@ if(BLENDX_BUILD_NODE_ADDON)
     "${BLENDX_GENERATED_DIR}"
     "${BLENDX_HERMES_SOURCE_DIR}/API"
     "${BLENDX_HERMES_SOURCE_DIR}/include")
-  target_link_libraries(blendx_native PRIVATE blend2d::blend2d ${BLENDX_SDL_TARGET})
+  target_link_libraries(blendx_native PRIVATE yogacore blend2d::blend2d ${BLENDX_SDL_TARGET})
   blendx_enable_warnings(blendx_native)
   set_target_properties(blendx_native PROPERTIES
     PREFIX ""

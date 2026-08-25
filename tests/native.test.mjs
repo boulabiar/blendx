@@ -245,7 +245,12 @@ test("text whiteSpace normal wraps and contributes multiline height", () => {
   ])
   native.commitMutations()
   native.renderFrame()
-  assert.ok(native.getElementBox(2).height >= 54, JSON.stringify(native.getElementBox(2)))
+  const initialHeight = native.getElementBox(2).height
+  assert.ok(initialHeight >= 54, JSON.stringify(native.getElementBox(2)))
+  native.setStyle(2, { width: 60, fontSize: 16, lineHeight: 24, whiteSpace: "normal" })
+  native.commitMutations()
+  native.renderFrame()
+  assert.ok(native.getElementBox(2).height > initialHeight, JSON.stringify(native.getElementBox(2)))
   native.dispatchPointer("mouseDown", 1, 8, 1)
   native.dispatchPointer("mouseMove", 58, 8, 1)
   native.dispatchPointer("mouseUp", 58, 8, 1)

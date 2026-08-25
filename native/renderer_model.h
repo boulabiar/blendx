@@ -1,9 +1,11 @@
 #pragma once
 
 #include <blend2d/blend2d.h>
+#include <yoga/Yoga.h>
 
 #include <algorithm>
 #include <optional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -121,6 +123,11 @@ struct CanvasCommand {
   std::string text;
 };
 
+struct YogaNodeContext {
+  void* renderer = nullptr;
+  uint64_t id = 0;
+};
+
 using PropValue = std::variant<std::monostate, double, bool, std::string,
                                std::vector<CanvasCommand>, BLPoint>;
 
@@ -148,6 +155,8 @@ struct Node {
   std::vector<std::string> undo_stack;
   std::vector<std::string> redo_stack;
   std::string composition;
+  YGNodeRef yoga = nullptr;
+  std::shared_ptr<YogaNodeContext> yoga_context;
 };
 
 struct Size { double w = 0.0; double h = 0.0; };

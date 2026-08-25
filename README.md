@@ -7,17 +7,17 @@ window, delivers input, and presents the CPU framebuffer.
 
 ```text
 React/Hermes bytecode -> react-reconciler -> N-API mutations -> retained C++ tree
-      -> flex layout -> Blend2D BLImage -> SDL window surface
+      -> Yoga flex layout -> Blend2D BLImage -> SDL window surface
 ```
 
 ## Run the example
 
-Prerequisites are Node.js 18+ and npm for the build tools, CMake 3.20+, a C++17
+Prerequisites are Node.js 18+ and npm for the build tools, CMake 3.20+, a C++20-capable
 compiler, and SDL2 development files. CMake downloads checksummed, commit-pinned
-Hermes, Blend2D, and AsmJit source archives on the first build. No sibling
+Hermes, Yoga, Blend2D, and AsmJit source archives on the first build. No sibling
 checkout or `/tmp` dependency is required. This initial native build is
-substantially longer than subsequent incremental builds. Hermes, Blend2D, and
-AsmJit are statically linked into the application host.
+substantially longer than subsequent incremental builds. Hermes, Yoga, Blend2D,
+and AsmJit are statically linked into the application host.
 
 ```bash
 npm install
@@ -36,7 +36,8 @@ changing the reproducible defaults:
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel \
   -DHERMES_ROOT=/path/to/hermes \
-  -DBLEND2D_ROOT=/path/to/blend2d
+  -DBLEND2D_ROOT=/path/to/blend2d \
+  -DYOGA_ROOT=/path/to/yoga
 cmake --build build --target blendx_hermes hermesc -j
 ```
 
@@ -273,7 +274,8 @@ rejected by TypeScript instead of being silently treated like browser CSS.
 
 React queues mutations such as `createElement`, `appendChild`, `setStyle`, and
 `setText`, then sends one array through N-API per commit. C++ retains those
-nodes, so unchanged UI does not cross N-API again. A mutation records the old
+nodes and a persistent Yoga node for each layout participant, so unchanged UI
+does not cross N-API again and Yoga can reuse cached layout. A mutation records the old
 damage, layout records the new damage, and overlapping rectangles are merged.
 Painting traverses only nodes intersecting each damage rectangle. The Hermes
 host supplies timers, microtask draining, console, `performance.now`, arguments,
@@ -293,6 +295,11 @@ p50/p95/p99/maximum frame times, and the rolling count above the 16.67 ms
 
 Blend2D chooses its SIMD implementation internally. BlendX deliberately does
 not contain handwritten intrinsics.
+
+Yoga owns ordinary row/column flex measurement and placement. BlendX keeps
+specialized layout for memory-windowed virtual lists, viewport-fixed nodes, and
+element-anchored overlays, then feeds the resulting boxes to the retained
+Blend2D painter.
 
 ## Current stress results
 

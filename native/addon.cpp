@@ -124,6 +124,15 @@ class Renderer {
     framebuffer_.reset();
     image_cache_.clear();
     svg_cache_.clear();
+    for (auto& [id, node] : nodes_) {
+      (void)id;
+      if (node.yoga) YGNodeRemoveAllChildren(node.yoga);
+    }
+    for (auto& [id, node] : nodes_) {
+      (void)id;
+      if (node.yoga) YGNodeFree(node.yoga);
+      node.yoga = nullptr;
+    }
     nodes_.clear();
     root_id_ = 0;
     running_ = false;
@@ -161,7 +170,13 @@ class Renderer {
     node.id = id;
     node.type = std::move(type);
     node.handler = element_registry_.resolve(node.type);
+    node.yoga = YGNodeNew();
+    node.yoga_context = std::make_shared<YogaNodeContext>();
+    node.yoga_context->renderer = this;
+    node.yoga_context->id = id;
+    YGNodeSetContext(node.yoga, node.yoga_context.get());
     nodes_[id] = std::move(node);
+    configure_yoga_node(nodes_.at(id));
     dirty_nodes_.insert(id);
   }
 
@@ -171,6 +186,7 @@ class Renderer {
     add_dirty_box(it->second.box);
     const auto children = it->second.children;
     const uint64_t parent = it->second.parent;
+    if (it->second.yoga) YGNodeRemoveAllChildren(it->second.yoga);
     for (uint64_t child : children) destroy_node(child, destroyed);
     if (parent) {
       auto parent_it = nodes_.find(parent);
@@ -181,7 +197,12 @@ class Renderer {
       }
     }
     destroyed.push_back(id);
+    if (it->second.yoga) {
+      YGNodeFree(it->second.yoga);
+      it->second.yoga = nullptr;
+    }
     nodes_.erase(it);
+    if (parent) sync_yoga_children(parent);
     scrolling_nodes_.erase(id);
     if (focused_id_ == id) focused_id_ = 0;
     if (hovered_id_ == id) hovered_id_ = 0;
@@ -201,6 +222,7 @@ class Renderer {
     if (p == nodes_.end() || c == nodes_.end()) return;
     p->second.children.push_back(child);
     c->second.parent = parent;
+    sync_yoga_children(parent);
     invalidate_layout(parent);
   }
 
@@ -212,6 +234,7 @@ class Renderer {
     }
     auto c = nodes_.find(child);
     if (c != nodes_.end() && c->second.parent == parent) c->second.parent = 0;
+    sync_yoga_children(parent);
     invalidate_layout(parent);
   }
 
@@ -224,6 +247,7 @@ class Renderer {
     auto where = std::find(children.begin(), children.end(), before);
     children.insert(where, child);
     c->second.parent = parent;
+    sync_yoga_children(parent);
     invalidate_layout(parent);
   }
 
@@ -242,15 +266,24 @@ class Renderer {
     if (!target) return;
     if (target->style.same_layout(style) && target->style.same_visual(style)) return;
     const bool layout_changed = !target->style.same_layout(style);
-    if (layout_changed) invalidate_layout(target->parent ? target->parent : id);
-    else invalidate_paint(id);
     target->style = std::move(style);
+    configure_yoga_node(*target);
+    if (layout_changed) {
+      // Font and wrapping fields affect intrinsic measurement but are not Yoga
+      // style properties, so explicitly invalidate measured leaves.
+      mark_yoga_measure_dirty(*target);
+      if (target->parent) sync_yoga_children(target->parent);
+      invalidate_layout(target->parent ? target->parent : id);
+    } else {
+      invalidate_paint(id);
+    }
   }
   void set_text(uint64_t id, std::string text) {
     Node* target = node(id);
     if (!target || target->text == text) return;
-    invalidate_layout(target->parent ? target->parent : id);
     target->text = std::move(text);
+    mark_yoga_measure_dirty(*target);
+    invalidate_layout(target->parent ? target->parent : id);
   }
   void set_custom_prop(uint64_t id, const std::string& name, PropValue value) {
     Node* target = node(id);
@@ -290,6 +323,7 @@ class Renderer {
     } else {
       target->props.insert_or_assign(name, std::move(value));
     }
+    mark_yoga_measure_dirty(*target);
   }
   void set_event(uint64_t id, const std::string& kind, bool enabled) {
     Node* target = node(id);
@@ -754,8 +788,7 @@ class Renderer {
     const auto started = std::chrono::steady_clock::now();
 
     const auto layout_started = std::chrono::steady_clock::now();
-    layout_node(root_id_, 0.0, 0.0, static_cast<double>(width_),
-                static_cast<double>(height_), width_, height_);
+    layout_tree();
     for (uint64_t id : dirty_nodes_) {
       if (Node* target = node(id)) add_dirty_box(target->box);
     }
@@ -852,18 +885,21 @@ class Renderer {
     Node* target = node(id);
     if (target) add_dirty_box(target->box);
     dirty_nodes_.insert(id);
+    if (target) mark_yoga_measure_dirty(*target);
     dirty_ = true;
   }
 
   void detach(uint64_t child) {
     auto c = nodes_.find(child);
     if (c == nodes_.end() || !c->second.parent) return;
-    auto p = nodes_.find(c->second.parent);
+    const uint64_t old_parent = c->second.parent;
+    auto p = nodes_.find(old_parent);
     if (p != nodes_.end()) {
       auto& children = p->second.children;
       children.erase(std::remove(children.begin(), children.end(), child), children.end());
     }
     c->second.parent = 0;
+    sync_yoga_children(old_parent);
   }
 
   BLFont make_font(double size) const {

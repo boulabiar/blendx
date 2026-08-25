@@ -1,339 +1,352 @@
-  Size natural_size(uint64_t id, double available_width) const {
-    auto it = nodes_.find(id);
-    if (it == nodes_.end()) return {};
-    const Node& n = it->second;
-    if (n.handler->kind == ElementHandler::Kind::kText) {
-      double wrap_width = n.style.width.resolve(available_width, available_width);
-      if (n.style.max_width.set) wrap_width = std::min(wrap_width, n.style.max_width.resolve(available_width, wrap_width));
-      const std::vector<std::string> lines = text_lines(n, std::max(1.0, wrap_width));
-      Size measured{};
-      for (const std::string& line : lines) measured.w = std::max(measured.w, measure_text(line, n.style.font_size).w);
-      const double line_height = n.style.line_height > 0.0
-                                     ? n.style.line_height
-                                     : measure_text("Mg", n.style.font_size).h;
-      measured.h = line_height * lines.size();
-      if (n.style.white_space == Style::WhiteSpace::kNormal ||
-          n.style.white_space == Style::WhiteSpace::kPreWrap) measured.w = std::min(measured.w, wrap_width);
-      measured.w = std::max(measured.w, n.style.min_width);
-      measured.h = std::max(measured.h, n.style.min_height);
-      return measured;
-    }
-
-    if (n.handler->kind == ElementHandler::Kind::kVirtualList) {
-      const double natural_h = n.children.size() * n.item_height +
-                               n.style.padding_top + n.style.padding_bottom;
-      return {
-          std::max(n.style.min_width, n.style.width.resolve(available_width, available_width)),
-          std::max(n.style.min_height, n.style.height.resolve(natural_h, natural_h)),
-      };
-    }
-
-    if (n.handler->kind == ElementHandler::Kind::kImage) {
-      Size result{100.0, 100.0};
-      if (const BLImage* image = image_for(string_prop(n, "src"))) {
-        result = {static_cast<double>(image->width()), static_cast<double>(image->height())};
-      }
-      result.w = n.style.width.resolve(available_width, result.w);
-      result.h = n.style.height.resolve(result.h, result.h);
-      return result;
-    }
-    if (n.handler->kind == ElementHandler::Kind::kSvg) {
-      return {n.style.width.resolve(available_width, 24.0), n.style.height.resolve(24.0, 24.0)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kCanvas) {
-      return {n.style.width.resolve(available_width, 300.0), n.style.height.resolve(150.0, 150.0)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kSeparator) {
-      return {n.style.width.resolve(available_width, available_width), n.style.height.resolve(1.0, 1.0)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kProgress) {
-      return {n.style.width.resolve(available_width, 120.0), n.style.height.resolve(8.0, 8.0)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kInput) {
-      const double rows = std::max(1.0, number_prop(n, "minRows", n.type == "textarea" ? 3.0 : 1.0));
-      const double line = n.style.line_height > 0.0 ? n.style.line_height : n.style.font_size * 1.35;
-      return {n.style.width.resolve(available_width, std::min(available_width, 320.0)),
-              n.style.height.resolve(rows * line + n.style.padding_top + n.style.padding_bottom,
-                                     rows * line + n.style.padding_top + n.style.padding_bottom)};
-    }
-    if (n.handler->kind == ElementHandler::Kind::kMarkdown ||
-        n.handler->kind == ElementHandler::Kind::kCode ||
-        n.handler->kind == ElementHandler::Kind::kDiff) {
-      const char* prop = n.handler->kind == ElementHandler::Kind::kMarkdown ? "source" :
-                         n.handler->kind == ElementHandler::Kind::kCode ? "code" : "patch";
-      const std::string content = string_prop(n, prop);
-      const double line = n.style.line_height > 0.0 ? n.style.line_height : n.style.font_size * 1.45;
-      return {n.style.width.resolve(available_width, available_width),
-              n.style.height.resolve(line_count(content) * line + n.style.padding_top + n.style.padding_bottom,
-                                     line_count(content) * line + n.style.padding_top + n.style.padding_bottom)};
-    }
-
-    const double provisional_w = n.style.width.resolve(available_width, available_width);
-    const double inner_w = std::max(0.0, provisional_w - n.style.padding_left -
-                                             n.style.padding_right);
-    double main = 0.0;
-    double cross = 0.0;
-    size_t flow_count = 0;
-    for (size_t i = 0; i < n.children.size(); ++i) {
-      auto child_it = nodes_.find(n.children[i]);
-      if (child_it == nodes_.end() ||
-          child_it->second.style.position != Style::Position::kRelative ||
-          child_it->second.handler->kind == ElementHandler::Kind::kAnchored) {
-        continue;
-      }
-      const Node& child_node = child_it->second;
-      const Size child = natural_size(n.children[i], inner_w);
-      if (n.style.row) {
-        main += child.w + child_node.style.margin_left + child_node.style.margin_right;
-        cross = std::max(cross, child.h + child_node.style.margin_top +
-                                    child_node.style.margin_bottom);
-      } else {
-        main += child.h + child_node.style.margin_top + child_node.style.margin_bottom;
-        cross = std::max(cross, child.w + child_node.style.margin_left +
-                                    child_node.style.margin_right);
-      }
-      ++flow_count;
-    }
-    if (flow_count > 1) main += n.style.gap * (flow_count - 1);
-    Size result = n.style.row
-                      ? Size{main + n.style.padding_left + n.style.padding_right,
-                             cross + n.style.padding_top + n.style.padding_bottom}
-                      : Size{cross + n.style.padding_left + n.style.padding_right,
-                             main + n.style.padding_top + n.style.padding_bottom};
-    result.w = n.style.width.resolve(available_width, result.w);
-    result.h = n.style.height.resolve(0.0, result.h);
-    result.w = std::max(result.w, n.style.min_width);
-    result.h = std::max(result.h, n.style.min_height);
-    if (n.style.max_width.set) result.w = std::min(result.w, n.style.max_width.resolve(available_width, result.w));
-    if (n.style.max_height.set) result.h = std::min(result.h, n.style.max_height.resolve(result.h, result.h));
-    return result;
+  static bool yoga_measures(const Node& node) {
+    return node.handler->kind != ElementHandler::Kind::kContainer &&
+           node.handler->kind != ElementHandler::Kind::kAnchored;
   }
 
-  void layout_node(uint64_t id, double x, double y, double available_w,
-                   double available_h, double forced_w = -1.0,
-                   double forced_h = -1.0) {
-    Node* n = node(id);
-    if (!n) return;
-    const Size natural = natural_size(id, available_w);
-    // The parent has already resolved basis, grow/shrink, percentages, and
-    // stretching into a forced size. Applying the child's explicit width a
-    // second time would discard that flex result (notably width: 0 + grow).
-    double w = std::max(n->style.min_width,
-                        forced_w >= 0.0 ? forced_w
-                                        : n->style.width.resolve(available_w, natural.w));
-    double h = std::max(n->style.min_height,
-                        forced_h >= 0.0 ? forced_h
-                                        : n->style.height.resolve(available_h, natural.h));
-    if (n->style.max_width.set) w = std::min(w, n->style.max_width.resolve(available_w, w));
-    if (n->style.max_height.set) h = std::min(h, n->style.max_height.resolve(available_h, h));
-    n->box = {x, y, std::max(0.0, w), std::max(0.0, h)};
-    if (n->handler->kind == ElementHandler::Kind::kText || n->children.empty()) return;
+  static YGAlign yoga_align(Style::Align align) {
+    switch (align) {
+      case Style::Align::kCenter: return YGAlignCenter;
+      case Style::Align::kEnd: return YGAlignFlexEnd;
+      case Style::Align::kStretch: return YGAlignStretch;
+      default: return YGAlignFlexStart;
+    }
+  }
 
-    const double inner_x = x + n->style.padding_left;
-    const double inner_y = y + n->style.padding_top;
-    const double inner_w = std::max(0.0, w - n->style.padding_left - n->style.padding_right);
-    const double inner_h = std::max(0.0, h - n->style.padding_top - n->style.padding_bottom);
-    if (n->handler->kind == ElementHandler::Kind::kVirtualList) {
-      n->content_height = n->children.size() * n->item_height +
-                          n->style.padding_top + n->style.padding_bottom;
-      const double max_scroll = std::max(0.0, n->content_height - h);
-      if (bool_prop(*n, "followTail") && n->children.size() != n->last_child_count) {
-        n->scroll_y = max_scroll;
-        n->scroll_target_y = max_scroll;
+  static YGJustify yoga_justify(Style::Justify justify) {
+    switch (justify) {
+      case Style::Justify::kCenter: return YGJustifyCenter;
+      case Style::Justify::kEnd: return YGJustifyFlexEnd;
+      case Style::Justify::kSpaceBetween: return YGJustifySpaceBetween;
+      default: return YGJustifyFlexStart;
+    }
+  }
+
+  static void set_yoga_dimension(YGNodeRef yoga, const Dimension& dimension,
+                                 void (*points)(YGNodeRef, float),
+                                 void (*percent)(YGNodeRef, float),
+                                 void (*automatic)(YGNodeRef)) {
+    if (!dimension.set) automatic(yoga);
+    else if (dimension.percent) percent(yoga, static_cast<float>(dimension.value));
+    else points(yoga, static_cast<float>(dimension.value));
+  }
+
+  static void set_yoga_max_dimension(YGNodeRef yoga, const Dimension& dimension,
+                                     void (*points)(YGNodeRef, float),
+                                     void (*percent)(YGNodeRef, float)) {
+    if (!dimension.set) points(yoga, YGUndefined);
+    else if (dimension.percent) percent(yoga, static_cast<float>(dimension.value));
+    else points(yoga, static_cast<float>(dimension.value));
+  }
+
+  void configure_yoga_node(Node& node) {
+    if (!node.yoga) return;
+    const Style& style = node.style;
+    YGNodeStyleSetBoxSizing(node.yoga, YGBoxSizingBorderBox);
+    YGNodeStyleSetFlexDirection(node.yoga,
+                                style.row ? YGFlexDirectionRow : YGFlexDirectionColumn);
+    YGNodeStyleSetFlexGrow(node.yoga, static_cast<float>(style.flex_grow));
+    YGNodeStyleSetFlexShrink(node.yoga, static_cast<float>(style.flex_shrink));
+    YGNodeStyleSetGap(node.yoga, YGGutterAll, static_cast<float>(style.gap));
+    YGNodeStyleSetAlignItems(node.yoga, yoga_align(style.align_items));
+    YGNodeStyleSetJustifyContent(node.yoga, yoga_justify(style.justify));
+    YGNodeStyleSetOverflow(node.yoga,
+                           style.overflow == Style::Overflow::kScroll ? YGOverflowScroll
+                           : style.overflow == Style::Overflow::kHidden ? YGOverflowHidden
+                                                                       : YGOverflowVisible);
+
+    const bool detached_overlay = style.position == Style::Position::kFixed ||
+                                  node.handler->kind == ElementHandler::Kind::kAnchored;
+    YGNodeStyleSetPositionType(node.yoga,
+        style.position == Style::Position::kAbsolute && !detached_overlay
+            ? YGPositionTypeAbsolute : YGPositionTypeRelative);
+    YGNodeStyleSetPosition(node.yoga, YGEdgeLeft,
+                           style.left ? static_cast<float>(*style.left) : YGUndefined);
+    YGNodeStyleSetPosition(node.yoga, YGEdgeRight,
+                           style.right ? static_cast<float>(*style.right) : YGUndefined);
+    YGNodeStyleSetPosition(node.yoga, YGEdgeTop,
+                           style.top ? static_cast<float>(*style.top) : YGUndefined);
+    YGNodeStyleSetPosition(node.yoga, YGEdgeBottom,
+                           style.bottom ? static_cast<float>(*style.bottom) : YGUndefined);
+
+    set_yoga_dimension(node.yoga, style.width, YGNodeStyleSetWidth,
+                       YGNodeStyleSetWidthPercent, YGNodeStyleSetWidthAuto);
+    set_yoga_dimension(node.yoga, style.height, YGNodeStyleSetHeight,
+                       YGNodeStyleSetHeightPercent, YGNodeStyleSetHeightAuto);
+    YGNodeStyleSetMinWidth(node.yoga, static_cast<float>(style.min_width));
+    YGNodeStyleSetMinHeight(node.yoga, static_cast<float>(style.min_height));
+    set_yoga_max_dimension(node.yoga, style.max_width, YGNodeStyleSetMaxWidth,
+                           YGNodeStyleSetMaxWidthPercent);
+    set_yoga_max_dimension(node.yoga, style.max_height, YGNodeStyleSetMaxHeight,
+                           YGNodeStyleSetMaxHeightPercent);
+
+    YGNodeStyleSetPadding(node.yoga, YGEdgeLeft, static_cast<float>(style.padding_left));
+    YGNodeStyleSetPadding(node.yoga, YGEdgeRight, static_cast<float>(style.padding_right));
+    YGNodeStyleSetPadding(node.yoga, YGEdgeTop, static_cast<float>(style.padding_top));
+    YGNodeStyleSetPadding(node.yoga, YGEdgeBottom, static_cast<float>(style.padding_bottom));
+    YGNodeStyleSetMargin(node.yoga, YGEdgeLeft, static_cast<float>(style.margin_left));
+    YGNodeStyleSetMargin(node.yoga, YGEdgeRight, static_cast<float>(style.margin_right));
+    YGNodeStyleSetMargin(node.yoga, YGEdgeTop, static_cast<float>(style.margin_top));
+    YGNodeStyleSetMargin(node.yoga, YGEdgeBottom, static_cast<float>(style.margin_bottom));
+    YGNodeSetMeasureFunc(node.yoga, yoga_measures(node) ? &Renderer::yoga_measure : nullptr);
+  }
+
+  bool yoga_child_participates(const Node& parent, const Node& child) const {
+    return parent.handler->kind != ElementHandler::Kind::kVirtualList &&
+           child.handler->kind != ElementHandler::Kind::kAnchored &&
+           child.style.position != Style::Position::kFixed;
+  }
+
+  void sync_yoga_children(uint64_t parent_id) {
+    Node* parent = node(parent_id);
+    if (!parent || !parent->yoga) return;
+    YGNodeRemoveAllChildren(parent->yoga);
+    if (yoga_measures(*parent)) return;
+    size_t index = 0;
+    for (uint64_t child_id : parent->children) {
+      Node* child = node(child_id);
+      if (child && child->yoga && yoga_child_participates(*parent, *child)) {
+        YGNodeInsertChild(parent->yoga, child->yoga, index++);
       }
-      n->last_child_count = n->children.size();
-      n->scroll_y = std::clamp(n->scroll_y, 0.0, max_scroll);
-      n->scroll_target_y = std::clamp(n->scroll_target_y, 0.0, max_scroll);
-      const size_t first = static_cast<size_t>(std::floor(n->scroll_y / n->item_height));
-      const size_t count = static_cast<size_t>(std::ceil(inner_h / n->item_height));
-      n->visible_start = first > n->overdraw ? first - n->overdraw : 0;
-      n->visible_end = std::min(n->children.size(), first + count + n->overdraw + 1);
-      for (size_t i = n->visible_start; i < n->visible_end; ++i) {
-        const double bottom_alignment = string_prop(*n, "alignment") == "bottom"
-                                            ? std::max(0.0, inner_h - n->children.size() * n->item_height)
-                                            : 0.0;
-        const double child_y = inner_y + bottom_alignment + i * n->item_height - n->scroll_y;
-        layout_node(n->children[i], inner_x, child_y, inner_w, n->item_height,
-                    inner_w, n->item_height);
+    }
+  }
+
+  void mark_yoga_measure_dirty(Node& node) {
+    if (node.yoga && YGNodeHasMeasureFunc(node.yoga)) YGNodeMarkDirty(node.yoga);
+  }
+
+  Size intrinsic_size(const Node& node, double available_width) const {
+    const double width = std::max(0.0, available_width);
+    if (node.handler->kind == ElementHandler::Kind::kText) {
+      const double wrap_width = std::max(1.0, width);
+      const std::vector<std::string> lines = text_lines(node, wrap_width);
+      Size measured{};
+      for (const std::string& line : lines) {
+        measured.w = std::max(measured.w, measure_text(line, node.style.font_size).w);
       }
+      const double line_height = node.style.line_height > 0.0
+                                     ? node.style.line_height
+                                     : measure_text("Mg", node.style.font_size).h;
+      measured.h = line_height * lines.size();
+      if (node.style.white_space == Style::WhiteSpace::kNormal ||
+          node.style.white_space == Style::WhiteSpace::kPreWrap) {
+        measured.w = std::min(measured.w, wrap_width);
+      }
+      return measured;
+    }
+    if (node.handler->kind == ElementHandler::Kind::kVirtualList) {
+      return {width, node.children.size() * node.item_height};
+    }
+    if (node.handler->kind == ElementHandler::Kind::kImage) {
+      if (const BLImage* image = image_for(string_prop(node, "src"))) {
+        return {static_cast<double>(image->width()), static_cast<double>(image->height())};
+      }
+      return {100.0, 100.0};
+    }
+    if (node.handler->kind == ElementHandler::Kind::kSvg) return {24.0, 24.0};
+    if (node.handler->kind == ElementHandler::Kind::kCanvas) return {300.0, 150.0};
+    if (node.handler->kind == ElementHandler::Kind::kSeparator) return {width, 1.0};
+    if (node.handler->kind == ElementHandler::Kind::kProgress) return {120.0, 8.0};
+    if (node.handler->kind == ElementHandler::Kind::kInput) {
+      const double rows = std::max(1.0, number_prop(node, "minRows", node.type == "textarea" ? 3.0 : 1.0));
+      const double line = node.style.line_height > 0.0 ? node.style.line_height : node.style.font_size * 1.35;
+      return {std::min(width, 320.0), rows * line};
+    }
+    if (node.handler->kind == ElementHandler::Kind::kMarkdown ||
+        node.handler->kind == ElementHandler::Kind::kCode ||
+        node.handler->kind == ElementHandler::Kind::kDiff) {
+      const char* prop = node.handler->kind == ElementHandler::Kind::kMarkdown ? "source" :
+                         node.handler->kind == ElementHandler::Kind::kCode ? "code" : "patch";
+      const double line = node.style.line_height > 0.0 ? node.style.line_height : node.style.font_size * 1.45;
+      return {width, line_count(string_prop(node, prop)) * line};
+    }
+    return {};
+  }
+
+  static YGSize yoga_measure(YGNodeConstRef yoga, float width, YGMeasureMode width_mode,
+                             float height, YGMeasureMode height_mode) {
+    auto* context = static_cast<YogaNodeContext*>(YGNodeGetContext(yoga));
+    if (!context || !context->renderer) return {0.0f, 0.0f};
+    auto* renderer = static_cast<Renderer*>(context->renderer);
+    Node* node = renderer->node(context->id);
+    if (!node) return {0.0f, 0.0f};
+    const double available_width = width_mode == YGMeasureModeUndefined
+                                       ? 1000000.0 : std::max(0.0f, width);
+    Size measured = renderer->intrinsic_size(*node, available_width);
+    if (width_mode == YGMeasureModeExactly) measured.w = width;
+    else if (width_mode == YGMeasureModeAtMost) measured.w = std::min(measured.w, static_cast<double>(width));
+    if (height_mode == YGMeasureModeExactly) measured.h = height;
+    else if (height_mode == YGMeasureModeAtMost) measured.h = std::min(measured.h, static_cast<double>(height));
+    return {static_cast<float>(std::max(0.0, measured.w)),
+            static_cast<float>(std::max(0.0, measured.h))};
+  }
+
+  void apply_yoga_boxes(uint64_t id, double origin_x, double origin_y, bool detached_root = false) {
+    Node* current = node(id);
+    if (!current || !current->yoga) return;
+    const double left = detached_root ? 0.0 : YGNodeLayoutGetLeft(current->yoga);
+    const double top = detached_root ? 0.0 : YGNodeLayoutGetTop(current->yoga);
+    current->box = {origin_x + left, origin_y + top,
+                    YGNodeLayoutGetWidth(current->yoga), YGNodeLayoutGetHeight(current->yoga)};
+    double content_bottom = current->style.padding_top;
+    for (uint64_t child_id : current->children) {
+      Node* child = node(child_id);
+      if (!child || !yoga_child_participates(*current, *child)) continue;
+      content_bottom = std::max(content_bottom,
+          static_cast<double>(YGNodeLayoutGetTop(child->yoga) + YGNodeLayoutGetHeight(child->yoga)));
+    }
+    current->content_height = content_bottom + current->style.padding_bottom;
+    const double max_scroll = std::max(0.0, current->content_height - current->box.h);
+    current->scroll_y = std::clamp(current->scroll_y, 0.0, max_scroll);
+    current->scroll_target_y = std::clamp(current->scroll_target_y, 0.0, max_scroll);
+    const double child_origin_y = current->box.y - current->scroll_y;
+    for (uint64_t child_id : current->children) {
+      Node* child = node(child_id);
+      if (child && yoga_child_participates(*current, *child)) {
+        apply_yoga_boxes(child_id, current->box.x, child_origin_y);
+      }
+    }
+  }
+
+  void calculate_forced_subtree(uint64_t id, double x, double y, double width, double height) {
+    Node* child = node(id);
+    if (!child || !child->yoga) return;
+    YGNodeStyleSetWidth(child->yoga, static_cast<float>(std::max(0.0, width)));
+    YGNodeStyleSetHeight(child->yoga, static_cast<float>(std::max(0.0, height)));
+    YGNodeCalculateLayout(child->yoga, static_cast<float>(width), static_cast<float>(height), YGDirectionLTR);
+    apply_yoga_boxes(id, x, y, true);
+    layout_special_descendants(id);
+    configure_yoga_node(*child);
+  }
+
+  void layout_virtual_children(Node& list) {
+    list.content_height = list.children.size() * list.item_height +
+                          list.style.padding_top + list.style.padding_bottom;
+    const double inner_h = std::max(0.0, list.box.h - list.style.padding_top - list.style.padding_bottom);
+    const double inner_w = std::max(0.0, list.box.w - list.style.padding_left - list.style.padding_right);
+    const double max_scroll = std::max(0.0, list.content_height - list.box.h);
+    if (bool_prop(list, "followTail") && list.children.size() != list.last_child_count) {
+      list.scroll_y = max_scroll;
+      list.scroll_target_y = max_scroll;
+    }
+    list.last_child_count = list.children.size();
+    list.scroll_y = std::clamp(list.scroll_y, 0.0, max_scroll);
+    list.scroll_target_y = std::clamp(list.scroll_target_y, 0.0, max_scroll);
+    const size_t first = static_cast<size_t>(std::floor(list.scroll_y / list.item_height));
+    const size_t count = static_cast<size_t>(std::ceil(inner_h / list.item_height));
+    list.visible_start = first > list.overdraw ? first - list.overdraw : 0;
+    list.visible_end = std::min(list.children.size(), first + count + list.overdraw + 1);
+    const double bottom_alignment = string_prop(list, "alignment") == "bottom"
+        ? std::max(0.0, inner_h - list.children.size() * list.item_height) : 0.0;
+    for (size_t i = list.visible_start; i < list.visible_end; ++i) {
+      const double child_y = list.box.y + list.style.padding_top + bottom_alignment +
+                             i * list.item_height - list.scroll_y;
+      calculate_forced_subtree(list.children[i], list.box.x + list.style.padding_left,
+                               child_y, inner_w, list.item_height);
+    }
+  }
+
+  void layout_overlay(Node& child, const Node& parent) {
+    const bool fixed = child.style.position == Style::Position::kFixed;
+    const double area_x = fixed ? 0.0 : parent.box.x + parent.style.padding_left;
+    const double area_y = fixed ? 0.0 : parent.box.y + parent.style.padding_top;
+    const double area_w = fixed ? static_cast<double>(width_)
+                                : std::max(0.0, parent.box.w - parent.style.padding_left - parent.style.padding_right);
+    const double area_h = fixed ? static_cast<double>(height_)
+                                : std::max(0.0, parent.box.h - parent.style.padding_top - parent.style.padding_bottom);
+    // An unconstrained detached root otherwise stretches to the entire
+    // available height, which makes an auto-sized popover viewport-sized.
+    const float layout_w = child.style.width.set || child.style.max_width.percent
+                               ? static_cast<float>(area_w) : YGUndefined;
+    const float layout_h = child.style.height.set || child.style.max_height.percent
+                               ? static_cast<float>(area_h) : YGUndefined;
+    YGNodeCalculateLayout(child.yoga, layout_w, layout_h, YGDirectionLTR);
+    double child_w = YGNodeLayoutGetWidth(child.yoga);
+    double child_h = YGNodeLayoutGetHeight(child.yoga);
+    if (!child.style.width.set && child.style.left && child.style.right) {
+      child_w = std::max(0.0, area_w - *child.style.left - *child.style.right);
+    }
+    if (!child.style.height.set && child.style.top && child.style.bottom) {
+      child_h = std::max(0.0, area_h - *child.style.top - *child.style.bottom);
+    }
+    double x = area_x + child.style.left.value_or(0.0);
+    double y = area_y + child.style.top.value_or(0.0);
+    if (!child.style.left && child.style.right) x = area_x + area_w - *child.style.right - child_w;
+    if (!child.style.top && child.style.bottom) y = area_y + area_h - *child.style.bottom - child_h;
+
+    if (child.handler->kind == ElementHandler::Kind::kAnchored) {
+      BLPoint anchor{};
+      bool found = false;
+      if (const double* anchor_id = prop_as<double>(child, "anchorId")) {
+        if (Node* target = node(static_cast<uint64_t>(*anchor_id))) {
+          const std::string side = string_prop(child, "side", "bottom");
+          const std::string align = string_prop(child, "align", "start");
+          anchor.x = align == "center" ? target->box.x + target->box.w * 0.5
+                     : align == "end" ? target->box.x + target->box.w : target->box.x;
+          anchor.y = side == "top" ? target->box.y
+                     : side == "bottom" ? target->box.y + target->box.h
+                     : align == "center" ? target->box.y + target->box.h * 0.5
+                     : align == "end" ? target->box.y + target->box.h : target->box.y;
+          if (side == "left") anchor.x = target->box.x;
+          else if (side == "right") anchor.x = target->box.x + target->box.w;
+          found = true;
+        }
+      }
+      if (!found) {
+        if (const BLPoint* position = prop_as<BLPoint>(child, "position")) {
+          anchor = *position;
+          found = true;
+        }
+      }
+      if (found) {
+        x = anchor.x;
+        y = anchor.y;
+        const std::string side = string_prop(child, "side", "bottom");
+        const std::string align = string_prop(child, "align", "start");
+        const double gap = number_prop(child, "anchorGap", 4.0);
+        if (side == "top" || side == "bottom") {
+          if (align == "center") x -= child_w * 0.5;
+          else if (align == "end") x -= child_w;
+          y += side == "top" ? -(child_h + gap) : gap;
+        } else {
+          if (align == "center") y -= child_h * 0.5;
+          else if (align == "end") y -= child_h;
+          x += side == "left" ? -(child_w + gap) : gap;
+        }
+        if (const BLPoint* offset = prop_as<BLPoint>(child, "offset")) {
+          x += offset->x;
+          y += offset->y;
+        }
+        x = std::clamp(x, 4.0, std::max(4.0, static_cast<double>(width_) - child_w - 4.0));
+        y = std::clamp(y, 4.0, std::max(4.0, static_cast<double>(height_) - child_h - 4.0));
+      }
+    }
+    calculate_forced_subtree(child.id, x, y, child_w, child_h);
+  }
+
+  void layout_special_descendants(uint64_t id) {
+    Node* parent = node(id);
+    if (!parent) return;
+    if (parent->handler->kind == ElementHandler::Kind::kVirtualList) {
+      layout_virtual_children(*parent);
       return;
     }
-    const double main_available = n->style.row ? inner_w : inner_h;
-    size_t flow_count = 0;
-    double occupied = 0.0;
-    double total_grow = 0.0;
-    double total_shrink = 0.0;
-    std::vector<Size> sizes;
-    sizes.reserve(n->children.size());
-    for (uint64_t child_id : n->children) {
+    const std::vector<uint64_t> children = parent->children;
+    for (uint64_t child_id : children) {
       Node* child = node(child_id);
-      Size size = natural_size(child_id, inner_w);
-      if (child) {
-        size.w = child->style.width.resolve(inner_w, size.w);
-        size.h = child->style.height.resolve(inner_h, size.h);
-        if (child->style.max_width.set) size.w = std::min(size.w, child->style.max_width.resolve(inner_w, size.w));
-        if (child->style.max_height.set) size.h = std::min(size.h, child->style.max_height.resolve(inner_h, size.h));
-        const bool in_flow = child->style.position == Style::Position::kRelative &&
-                             child->handler->kind != ElementHandler::Kind::kAnchored;
-        if (in_flow) {
-          total_grow += child->style.flex_grow;
-          total_shrink += (n->style.row ? size.w : size.h) * child->style.flex_shrink;
-          occupied += n->style.row
-                          ? size.w + child->style.margin_left + child->style.margin_right
-                          : size.h + child->style.margin_top + child->style.margin_bottom;
-          ++flow_count;
-        }
-      }
-      sizes.push_back(size);
-    }
-    if (flow_count > 1) occupied += n->style.gap * (flow_count - 1);
-    if (occupied > main_available && total_shrink > 0.0) {
-      const double deficit = occupied - main_available;
-      for (size_t i = 0; i < n->children.size(); ++i) {
-        Node* child = node(n->children[i]);
-        if (!child || child->style.position != Style::Position::kRelative ||
-            child->handler->kind == ElementHandler::Kind::kAnchored) continue;
-        double& main_size = n->style.row ? sizes[i].w : sizes[i].h;
-        const double share = deficit * main_size * child->style.flex_shrink / total_shrink;
-        main_size = std::max(0.0, main_size - share);
-      }
-      occupied = main_available;
-    }
-    const double extra = std::max(0.0, main_available - occupied);
-    n->content_height = n->style.row
-                            ? inner_h
-                            : occupied + n->style.padding_top + n->style.padding_bottom;
-    const double max_scroll = std::max(0.0, n->content_height - h);
-    n->scroll_y = std::clamp(n->scroll_y, 0.0, max_scroll);
-    n->scroll_target_y = std::clamp(n->scroll_target_y, 0.0, max_scroll);
-    double effective_gap = n->style.gap;
-    double main_offset = 0.0;
-    if (total_grow == 0.0) {
-      if (n->style.justify == Style::Justify::kCenter) main_offset = extra * 0.5;
-      else if (n->style.justify == Style::Justify::kEnd) main_offset = extra;
-      else if (n->style.justify == Style::Justify::kSpaceBetween && flow_count > 1) {
-        effective_gap += extra / static_cast<double>(flow_count - 1);
-      }
-    }
-    double cursor = (n->style.row ? inner_x : inner_y - n->scroll_y) + main_offset;
-    for (size_t i = 0; i < n->children.size(); ++i) {
-      Node* child = node(n->children[i]);
       if (!child) continue;
-      double child_w = sizes[i].w;
-      double child_h = sizes[i].h;
-      const bool anchored = child->handler->kind == ElementHandler::Kind::kAnchored;
-      if (child->style.position != Style::Position::kRelative || anchored) {
-        const bool fixed = child->style.position == Style::Position::kFixed;
-        const double positioning_x = fixed ? 0.0 : inner_x;
-        const double positioning_y = fixed ? 0.0 : inner_y;
-        const double positioning_w = fixed ? static_cast<double>(width_) : inner_w;
-        const double positioning_h = fixed ? static_cast<double>(height_) : inner_h;
-        if (fixed) {
-          // Fixed descendants resolve percentages against the viewport, not
-          // against whichever small in-flow component happens to own them.
-          const Size fixed_natural = natural_size(child->id, positioning_w);
-          child_w = child->style.width.resolve(positioning_w, fixed_natural.w);
-          child_h = child->style.height.resolve(positioning_h, fixed_natural.h);
-          child_w = std::max(child_w, child->style.min_width);
-          child_h = std::max(child_h, child->style.min_height);
-          if (child->style.max_width.set) {
-            child_w = std::min(child_w, child->style.max_width.resolve(positioning_w, child_w));
-          }
-          if (child->style.max_height.set) {
-            child_h = std::min(child_h, child->style.max_height.resolve(positioning_h, child_h));
-          }
-        }
-        double absolute_x = positioning_x + child->style.left.value_or(0.0);
-        double absolute_y = positioning_y + child->style.top.value_or(0.0);
-        if (!child->style.width.set && child->style.left && child->style.right) {
-          child_w = std::max(0.0, positioning_w - *child->style.left - *child->style.right);
-        } else if (!child->style.left && child->style.right) {
-          absolute_x = positioning_x + positioning_w - *child->style.right - child_w;
-        }
-        if (!child->style.height.set && child->style.top && child->style.bottom) {
-          child_h = std::max(0.0, positioning_h - *child->style.top - *child->style.bottom);
-        } else if (!child->style.top && child->style.bottom) {
-          absolute_y = positioning_y + positioning_h - *child->style.bottom - child_h;
-        }
-        if (anchored) {
-          BLPoint anchor_point;
-          bool has_anchor = false;
-          if (const double* anchor_id = prop_as<double>(*child, "anchorId")) {
-            if (Node* anchor_node = node(static_cast<uint64_t>(*anchor_id))) {
-              const std::string side = string_prop(*child, "side", "bottom");
-              const std::string align = string_prop(*child, "align", "start");
-              anchor_point.x = align == "center" ? anchor_node->box.x + anchor_node->box.w * 0.5
-                               : align == "end" ? anchor_node->box.x + anchor_node->box.w
-                                                : anchor_node->box.x;
-              anchor_point.y = side == "top" ? anchor_node->box.y
-                               : side == "bottom" ? anchor_node->box.y + anchor_node->box.h
-                               : align == "center" ? anchor_node->box.y + anchor_node->box.h * 0.5
-                               : align == "end" ? anchor_node->box.y + anchor_node->box.h
-                                                : anchor_node->box.y;
-              if (side == "left") anchor_point.x = anchor_node->box.x;
-              else if (side == "right") anchor_point.x = anchor_node->box.x + anchor_node->box.w;
-              has_anchor = true;
-            }
-          }
-          if (!has_anchor) {
-            if (const BLPoint* point = prop_as<BLPoint>(*child, "position")) {
-              anchor_point = *point;
-              has_anchor = true;
-            }
-          }
-          if (has_anchor) {
-            absolute_x = anchor_point.x;
-            absolute_y = anchor_point.y;
-            const std::string side = string_prop(*child, "side", "bottom");
-            const std::string align = string_prop(*child, "align", "start");
-            const double anchor_gap = number_prop(*child, "anchorGap", 4.0);
-            if (side == "top" || side == "bottom") {
-              if (align == "center") absolute_x -= child_w * 0.5;
-              else if (align == "end") absolute_x -= child_w;
-              absolute_y += side == "top" ? -(child_h + anchor_gap) : anchor_gap;
-            } else {
-              if (align == "center") absolute_y -= child_h * 0.5;
-              else if (align == "end") absolute_y -= child_h;
-              absolute_x += side == "left" ? -(child_w + anchor_gap) : anchor_gap;
-            }
-            if (const BLPoint* offset = prop_as<BLPoint>(*child, "offset")) {
-              absolute_x += offset->x;
-              absolute_y += offset->y;
-            }
-            absolute_x = std::clamp(absolute_x, 4.0, std::max(4.0, static_cast<double>(width_) - child_w - 4.0));
-            absolute_y = std::clamp(absolute_y, 4.0, std::max(4.0, static_cast<double>(height_) - child_h - 4.0));
-          }
-        }
-        layout_node(child->id, absolute_x, absolute_y, positioning_w, positioning_h, child_w, child_h);
-        continue;
-      }
-      if (child->style.flex_grow > 0.0 && total_grow > 0.0) {
-        const double share = extra * child->style.flex_grow / total_grow;
-        if (n->style.row) child_w += share;
-        else child_h += share;
-      }
-      if (n->style.row) {
-        if (!child->style.height.set && n->style.align_items == Style::Align::kStretch) {
-          child_h = std::max(0.0, inner_h - child->style.margin_top - child->style.margin_bottom);
-        }
-        double cross_y = inner_y + child->style.margin_top;
-        if (n->style.align_items == Style::Align::kCenter) cross_y = inner_y + (inner_h - child_h) * 0.5;
-        else if (n->style.align_items == Style::Align::kEnd) cross_y = inner_y + inner_h - child_h - child->style.margin_bottom;
-        cursor += child->style.margin_left;
-        layout_node(child->id, cursor, cross_y, inner_w, inner_h, child_w, child_h);
-        cursor += child_w + child->style.margin_right + effective_gap;
-      } else {
-        if (!child->style.width.set && n->style.align_items == Style::Align::kStretch) {
-          child_w = std::max(0.0, inner_w - child->style.margin_left - child->style.margin_right);
-        }
-        double cross_x = inner_x + child->style.margin_left;
-        if (n->style.align_items == Style::Align::kCenter) cross_x = inner_x + (inner_w - child_w) * 0.5;
-        else if (n->style.align_items == Style::Align::kEnd) cross_x = inner_x + inner_w - child_w - child->style.margin_right;
-        cursor += child->style.margin_top;
-        layout_node(child->id, cross_x, cursor, inner_w, inner_h, child_w, child_h);
-        cursor += child_h + child->style.margin_bottom + effective_gap;
-      }
+      if (!yoga_child_participates(*parent, *child)) layout_overlay(*child, *parent);
+      else layout_special_descendants(child_id);
     }
+  }
+
+  void layout_tree() {
+    Node* root = node(root_id_);
+    if (!root || !root->yoga) return;
+    YGNodeStyleSetWidth(root->yoga, static_cast<float>(width_));
+    YGNodeStyleSetHeight(root->yoga, static_cast<float>(height_));
+    YGNodeCalculateLayout(root->yoga, static_cast<float>(width_), static_cast<float>(height_), YGDirectionLTR);
+    apply_yoga_boxes(root_id_, 0.0, 0.0, true);
+    layout_special_descendants(root_id_);
   }
 
   static bool intersects(const Box& box, const BLRectI& rect) {
