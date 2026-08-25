@@ -7,10 +7,10 @@ Latest 5,000-message headless chat benchmark:
 | Measurement | Result |
 |---|---:|
 | Retained native nodes | 97 |
-| Initial React/native mount | ~5 ms |
-| Steady renderer p50 | ~0.45 ms |
-| Steady renderer p95 | ~0.92 ms |
-| Worst sampled frame | ~2.3 ms |
+| Initial React/native mount | ~3.9 ms |
+| Steady renderer p50 | ~0.44 ms |
+| Steady renderer p95 | ~0.73 ms |
+| Worst sampled frame | ~2.1 ms |
 | Layout per update | ~0.20–0.55 ms |
 | Paint per update | ~0.10–0.52 ms |
 | Nodes painted per animation | 50 |
@@ -29,6 +29,30 @@ presentation should be considerably cheaper, but it needs benchmarking there.
 
 The animation currently runs every 32 ms, about 31 FPS. It can be changed to
 16 ms for a 60 FPS workload.
+
+### Visual component scaling
+
+The `visual-stress` benchmark deliberately retains compound cards containing
+containers, text, badges, progress bars, and canvas charts. A representative
+headless run on the same development machine measured:
+
+| Profile | Widgets | Native nodes | Actual FPS | Native p50 | Native p95 |
+|---|---:|---:|---:|---:|---:|
+| Sparse 5% | 250 | 2,654 | ~51 | ~15.2 ms | ~15.6 ms |
+| Dense 100% | 250 | 2,654 | ~16 | ~18.2 ms | ~25.1 ms |
+| Sparse 5% | 1,000 | 10,241 | ~13–15 | ~54–59 ms | ~55–61 ms |
+
+This result is intentionally different from the 97-node chat measurement. The
+current layout pass visits the complete retained tree after a relevant commit,
+so layout dominates at thousands of ordinary retained components even when
+only 5% change. Dirty-region painting still limits pixels, but does not avoid
+that global layout cost. Incremental dirty-subtree layout is therefore the most
+important performance optimization exposed by this benchmark.
+
+`actualFps` includes the application update cadence and React/Hermes work;
+native percentiles cover layout, Blend2D paint, and presentation only. Headless
+presentation excludes the desktop compositor. Use identical profile, widget
+count, update share, target rate, and duration when comparing commits.
 
 ### Memory use
 

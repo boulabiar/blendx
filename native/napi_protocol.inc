@@ -554,7 +554,9 @@ napi_value get_stats(napi_env env, napi_callback_info) {
   set("mutationsLastCommit", renderer.mutations_last_commit());
   set("frameP50Ms", renderer.frame_percentile(0.50));
   set("frameP95Ms", renderer.frame_percentile(0.95));
+  set("frameP99Ms", renderer.frame_percentile(0.99));
   set("frameMaxMs", renderer.frame_percentile(1.0));
+  set("framesOverBudget", static_cast<double>(renderer.frames_over_budget(1000.0 / 60.0)));
   set("threads", renderer.threads());
   return result;
 }

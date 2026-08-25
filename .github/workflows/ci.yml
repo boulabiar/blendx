@@ -60,5 +60,8 @@ jobs:
       - name: Run application foundation gallery under Hermes
         run: node tools/hermes-app.mjs run examples/foundation.tsx -- --headless
 
+      - name: Run visual component stress smoke test
+        run: node tools/hermes-app.mjs run examples/visual-stress.tsx -- --headless --components=100 --duration=1200
+
       - name: Verify the packed executable
         run: node tools/hermes-app.mjs pack examples/chat.tsx build/blendx-chat && ./build/blendx-chat --headless

@@ -61,6 +61,26 @@ without window-presentation overhead:
 npm run benchmark
 ```
 
+For a visual scaling benchmark, `visual-stress` retains 250 to 5,000 compound
+metric widgets (roughly ten native nodes each) and can pressure sparse updates,
+dense updates, layout, painting, mount/unmount churn, or scrolling independently:
+
+```bash
+npm run visual-stress
+npm run visual-stress:benchmark
+npm run visual-stress:matrix
+
+# Override the deterministic workload:
+npm run visual-stress -- --components=2500 --profile=dense --update=100 --fps=60
+npm run visual-stress:matrix -- --components=1000 --duration=4000
+```
+
+Its telemetry reports actual application FPS alongside native layout, paint,
+presentation, p50/p95/p99/maximum frame time, rolling 60 Hz budget misses,
+mutations, dirty rectangles, and painted node visits. Headless native frame
+times intentionally exclude desktop-compositor cost and React/Hermes work
+outside the native frame; actual FPS makes that distinction visible.
+
 The GPUix-inspired chat workload retains 5,000 messages and exercises images,
 SVG icons, a changing canvas, buttons, badges, progress, Markdown, code, diffs,
 an editable composer, absolute positioning, and an anchored model picker:
@@ -174,6 +194,10 @@ npm run compile:components
 # And the application-foundation gallery:
 npm run compile:foundation
 ./build/blendx-foundation
+
+# And the visual component benchmark:
+npm run compile:visual-stress
+./build/blendx-visual-stress --components=2500 --profile=paint
 ```
 
 The executable still uses the target operating system's SDL2 and GUI libraries.
@@ -263,8 +287,9 @@ The native renderer is organized into `renderer_model.h`,
 unit while keeping feature ownership and review boundaries explicit.
 
 `getStats()` separates `layoutTimeMs`, `paintTimeMs`, and `presentTimeMs`, and
-also reports dirty rectangles, painted pixels/nodes, mutations, and rolling
-p50/p95/maximum frame times.
+also reports dirty rectangles, painted pixels/nodes, mutations, rolling
+p50/p95/p99/maximum frame times, and the rolling count above the 16.67 ms
+60 Hz frame budget.
 
 Blend2D chooses its SIMD implementation internally. BlendX deliberately does
 not contain handwritten intrinsics.
@@ -289,8 +314,8 @@ session, presentation dominates and should be evaluated separately from CPU
 layout and Blend2D paint time.
 
 The current 5,000-message chat benchmark retains 97 native nodes. A
-representative packed Hermes headless run mounted in about 5 ms and updated its
-animated canvas/progress at about a 0.45 ms median and 0.92 ms p95 renderer
+representative packed Hermes headless run mounted in about 3.9 ms and updated its
+animated canvas/progress at about a 0.44 ms median and 0.73 ms p95 renderer
 frame time while painting 50 intersecting nodes and 7,480 pixels per update.
 See [`CAPABILITIES.md`](CAPABILITIES.md) for the measurement scope and memory
 comparison.

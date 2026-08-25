@@ -187,7 +187,10 @@ export interface NativeStats {
   mutationsLastCommit: number
   frameP50Ms: number
   frameP95Ms: number
+  frameP99Ms: number
   frameMaxMs: number
+  /** Frames over the 60 Hz 16.67 ms budget in the rolling sample window. */
+  framesOverBudget: number
   threads: number
 }
 

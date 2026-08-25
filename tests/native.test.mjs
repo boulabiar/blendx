@@ -29,6 +29,8 @@ test("renders a retained tree into a headless Blend2D framebuffer", () => {
   assert.equal(stats.frameCount, 1)
   assert.equal(stats.threads, 2)
   assert.ok(stats.renderTimeMs >= 0)
+  assert.equal(typeof stats.frameP99Ms, "number")
+  assert.equal(typeof stats.framesOverBudget, "number")
   native.shutdown()
 })
 

@@ -455,6 +455,11 @@ class Renderer {
         static_cast<size_t>(std::floor((sorted.size() - 1) * percentile)));
     return sorted[index];
   }
+  size_t frames_over_budget(double budget_ms) const {
+    return static_cast<size_t>(std::count_if(
+        frame_samples_.begin(), frame_samples_.end(),
+        [budget_ms](double sample) { return sample > budget_ms; }));
+  }
   uint32_t threads() const { return threads_; }
 
   bool poll(napi_env env, napi_ref event_callback) {
